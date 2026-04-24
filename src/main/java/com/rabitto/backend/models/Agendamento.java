@@ -13,15 +13,15 @@ public class Agendamento {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-
     private LocalDateTime dataHora;
 
-    // o agendamento do Pet que vai receber o serviço
+    // Novo campo: Começa como "Pendente" por padrão
+    private String status = "Pendente";
+
     @ManyToOne
     @JoinColumn(name = "pet_id")
     private Pet pet;
 
-    // o agendamento do Serviço escolhido (Banho, Tosa, etc.)
     @ManyToOne
     @JoinColumn(name = "servico_id")
     private Servico servico;

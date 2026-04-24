@@ -92,5 +92,5 @@ public class AgendamentoController {
         return ResponseEntity.ok(salvo);
     }
 
-    // ... (Os métodos de PUT e DELETE continuam iguais, tu podes colar eles aqui embaixo) ...
+
 }
