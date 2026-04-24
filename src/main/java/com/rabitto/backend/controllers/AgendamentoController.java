@@ -8,7 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -18,43 +20,101 @@ public class AgendamentoController {
     @Autowired
     private AgendamentoRepository agendamentoRepository;
 
-    // chama o repositório de serviços para descobrir o nome do serviço escolhido
     @Autowired
     private ServicoRepository servicoRepository;
 
+    // Lista todos os agendamentos salvos no banco
     @GetMapping
     public List<Agendamento> listarTodos() {
         return agendamentoRepository.findAll();
     }
 
+    // Rota para o aplicativo consultar quais horários estão livres em um dia específico
+    @GetMapping("/horarios-disponiveis")
+    public ResponseEntity<?> buscarHorariosDisponiveis(
+            @RequestParam LocalDate data,
+            @RequestParam Long servicoId) {
+
+        // 1. Busca o serviço pra saber se a regra é de Banhista ou Veterinário
+        Servico servico = servicoRepository.findById(servicoId).orElse(null);
+        if (servico == null) {
+            return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
+        }
+
+        boolean isVeterinario = servico.getNome().toLowerCase().contains("consulta") ||
+                servico.getNome().toLowerCase().contains("vacina");
+
+        // 2. Define o período do expediente daquele dia (09:00 às 17:00)
+        LocalDateTime inicioExpediente = data.atTime(9, 0);
+        LocalDateTime fimExpediente = data.atTime(17, 0);
+
+        // 3. Puxa do banco tudo que já está ocupado nesse intervalo
+        List<Agendamento> agendamentosDoDia = agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
+
+        List<String> horariosLivres = new ArrayList<>();
+
+        if (isVeterinario) {
+            // Regra do VET: Slots de 30 min, limite de 1 profissional
+            for (int hora = 9; hora < 17; hora++) {
+                for (int min : new int[]{0, 30}) {
+                    LocalDateTime horarioVerificado = data.atTime(hora, min);
+
+                    long ocupados = agendamentosDoDia.stream()
+                            .filter(a -> a.getDataHora().equals(horarioVerificado))
+                            .filter(a -> a.getServico().getNome().toLowerCase().contains("consulta") ||
+                                    a.getServico().getNome().toLowerCase().contains("vacina"))
+                            .count();
+
+                    if (ocupados < 1) {
+                        horariosLivres.add(String.format("%02d:%02d", hora, min));
+                    }
+                }
+            }
+        } else {
+            // Regra do BANHO: Slots de 1h, limite de 2 profissionais
+            for (int hora = 9; hora < 17; hora++) {
+                LocalDateTime horarioVerificado = data.atTime(hora, 0);
+
+                long ocupados = agendamentosDoDia.stream()
+                        .filter(a -> a.getDataHora().equals(horarioVerificado))
+                        .filter(a -> !(a.getServico().getNome().toLowerCase().contains("consulta") ||
+                                a.getServico().getNome().toLowerCase().contains("vacina")))
+                        .count();
+
+                if (ocupados < 2) {
+                    horariosLivres.add(String.format("%02d:00", hora));
+                }
+            }
+        }
+
+        return ResponseEntity.ok(horariosLivres);
+    }
+
+    // Salva um agendamento novo aplicando as travas de segurança
     @PostMapping
     public ResponseEntity<?> salvar(@RequestBody Agendamento agendamento) {
         LocalDateTime dataHora = agendamento.getDataHora();
 
-        // REGRA 1: Horário de funcionamento (09h00 às 17h00)
+        // VALIDAÇÃO 1: Horário de funcionamento (09h às 17h)
         if (dataHora.getHour() < 9 || dataHora.getHour() >= 17) {
-            return ResponseEntity.badRequest().body("Erro: O horário de funcionamento do Rabitto é das 09:00 às 17:00.");
+            return ResponseEntity.badRequest().body("Erro: O Rabitto funciona apenas das 09:00 às 17:00.");
         }
 
-        // Busca o serviço completo no banco para saber do que se trata
         Servico servicoEscolhido = servicoRepository.findById(agendamento.getServico().getId()).orElse(null);
         if (servicoEscolhido == null) {
-            return ResponseEntity.badRequest().body("Erro: Serviço não encontrado no banco de dados.");
+            return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
         }
 
-        // Identifica se é serviço de veterinário pela palavra no nome
         String nomeServico = servicoEscolhido.getNome().toLowerCase();
         boolean isVeterinario = nomeServico.contains("consulta") || nomeServico.contains("vacina");
 
-        // Busca todos os agendamentos que já estão marcados para essa mesma data e hora exatas
+        // Busca agendamentos que já existem exatamente na mesma hora
         List<Agendamento> agendamentosNoHorario = agendamentoRepository.findByDataHora(dataHora);
 
         int contagemVet = 0;
         int contagemBanho = 0;
 
-        // Conta quantos de cada tipo já existem naquele horário
         for (Agendamento agendado : agendamentosNoHorario) {
-            // Puxa o serviço do agendamento que já estava salvo no banco para checar o nome
             Servico servicoAgendado = servicoRepository.findById(agendado.getServico().getId()).orElse(null);
             if (servicoAgendado != null) {
                 String nomeAgendado = servicoAgendado.getNome().toLowerCase();
@@ -66,31 +126,37 @@ public class AgendamentoController {
             }
         }
 
-        // REGRA 2: Validações de limites e duração
+        // VALIDAÇÃO 2: Limites de funcionários e duração dos slots
         if (isVeterinario) {
-            // Só existe 1 veterinário
             if (contagemVet >= 1) {
-                return ResponseEntity.badRequest().body("Erro: O veterinário já possui uma consulta marcada para este horário.");
+                return ResponseEntity.badRequest().body("Erro: O veterinário já está ocupado nesse horário.");
             }
-            // Consultas duram 30 min (só aceita agendar em hora cheia :00 ou meia hora :30)
             if (dataHora.getMinute() != 0 && dataHora.getMinute() != 30) {
-                return ResponseEntity.badRequest().body("Erro: Consultas veterinárias devem ser marcadas em intervalos de 30 minutos (ex: 09:00, 09:30).");
+                return ResponseEntity.badRequest().body("Erro: Consultas devem ser em intervalos de 30 min (ex: 14:00, 14:30).");
             }
         } else {
-            // Só existem 2 banhistas
             if (contagemBanho >= 2) {
-                return ResponseEntity.badRequest().body("Erro: Todos os banhistas já estão ocupados neste horário.");
+                return ResponseEntity.badRequest().body("Erro: Todos os banhistas já estão ocupados nesse horário.");
             }
-            // Banhos duram 1 hora (só aceita agendar em hora cheia :00)
             if (dataHora.getMinute() != 0) {
-                return ResponseEntity.badRequest().body("Erro: Banhos e tosas devem ser marcados em hora cheia (ex: 09:00, 10:00).");
+                return ResponseEntity.badRequest().body("Erro: Banhos devem ser marcados em hora cheia (ex: 10:00).");
             }
         }
 
-        // Se passou por todas as barreiras, o código finalmente salva no banco!
-        Agendamento salvo = agendamentoRepository.save(agendamento);
-        return ResponseEntity.ok(salvo);
+        // Se passar por tudo, salva no banco e devolve o agendamento (com status "Pendente")
+        return ResponseEntity.ok(agendamentoRepository.save(agendamento));
     }
 
+    // Atualiza um agendamento (Ex: Gerente aprova mudando o status)
+    @PutMapping("/{id}")
+    public Agendamento atualizar(@PathVariable Long id, @RequestBody Agendamento agendamentoAtualizado) {
+        agendamentoAtualizado.setId(id);
+        return agendamentoRepository.save(agendamentoAtualizado);
+    }
 
+    // Remove um agendamento do banco
+    @DeleteMapping("/{id}")
+    public void deletar(@PathVariable Long id) {
+        agendamentoRepository.deleteById(id);
+    }
 }
