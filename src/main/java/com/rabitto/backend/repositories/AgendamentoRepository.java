@@ -10,4 +10,7 @@ import java.util.List;
 public interface AgendamentoRepository extends JpaRepository<Agendamento, Long> {
     // faz o "SELECT" no banco pela DataHora automaticamente!
     List<Agendamento> findByDataHora(LocalDateTime dataHora);
+
+    // O Spring vai buscar tudo que estiver "entre" o começo e o fim do dia
+    List<Agendamento> findByDataHoraBetween(LocalDateTime inicio, LocalDateTime fim);
 }

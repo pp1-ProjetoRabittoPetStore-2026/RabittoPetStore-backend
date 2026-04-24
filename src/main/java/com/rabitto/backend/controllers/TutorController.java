@@ -19,8 +19,8 @@ public class TutorController {
         return repository.findAll();
     }
 
-    @PostMapping // Endpoint para cadastrar: POST /tutores
-    public Tutor salvar(@RequestBody Tutor tutor) {
+    @PostMapping // Endpoint to register: POST /tutores
+    public Tutor save(@RequestBody Tutor tutor) {
         return repository.save(tutor);
     }
 
