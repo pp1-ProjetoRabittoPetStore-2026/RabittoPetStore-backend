@@ -42,6 +42,12 @@ public class PetController {
         return repository.save(pet);
     }
 
+    @GetMapping("/{id}")
+    public Pet buscarPorId(@PathVariable Long id) {
+        return repository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Pet não encontrado"));
+    }
+
     @PutMapping("/{id}") // A URL agora vai pedir o ID do pet: PUT /pets/1
     public Pet atualizar(@PathVariable Long id, @RequestBody Pet petAtualizado) {
         // pega o ID que veio na URL e coloca no pet que veio no JSON
