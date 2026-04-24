@@ -57,7 +57,7 @@ public class AuthController {
 
     @PostMapping("/login")
     @Transactional
-    @CrossOrigin(origins = "*") // Permitir CORS para todos os domínios (ajuste conforme necessário)
+    @CrossOrigin(origins = "*")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         Optional<Tutor> tutorOpt = tutorRepository.findByEmail(request.email());
         if (tutorOpt.isEmpty()) {
