@@ -13,13 +13,12 @@ public class Pet {
     private Long id;
 
     private String nome;
-
     private String raca;
-
-    private String porte; // Pequeno, Médio, Grande
-
+    private String porte;
+    private String especie; // Ex: Cachorro, Gato, Calopsita
+    private Integer idade;  // Idade em anos (ou meses String)
 
     @ManyToOne
-    @JoinColumn(name = "tutor_id") // Vai criar uma coluna no banco guardando o ID do dono
+    @JoinColumn(name = "tutor_id")
     private Tutor tutor;
 }
