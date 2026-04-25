@@ -29,7 +29,8 @@ public class AgendamentoController {
         return agendamentoRepository.findAll();
     }
 
-    // Rota para o aplicativo consultar quais horários estão livres em um dia específico
+    // Rota para o aplicativo consultar quais horários estão livres em um dia
+    // específico
     @GetMapping("/horarios-disponiveis")
     public ResponseEntity<?> buscarHorariosDisponiveis(
             @RequestParam LocalDate data,
@@ -49,14 +50,15 @@ public class AgendamentoController {
         LocalDateTime fimExpediente = data.atTime(17, 0);
 
         // 3. Puxa do banco tudo que já está ocupado nesse intervalo
-        List<Agendamento> agendamentosDoDia = agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
+        List<Agendamento> agendamentosDoDia = agendamentoRepository.findByDataHoraBetween(inicioExpediente,
+                fimExpediente);
 
         List<String> horariosLivres = new ArrayList<>();
 
         if (isVeterinario) {
             // Regra do VET: Slots de 30 min, limite de 1 profissional
             for (int hora = 9; hora < 17; hora++) {
-                for (int min : new int[]{0, 30}) {
+                for (int min : new int[] { 0, 30 }) {
                     LocalDateTime horarioVerificado = data.atTime(hora, min);
 
                     long ocupados = agendamentosDoDia.stream()
@@ -132,7 +134,8 @@ public class AgendamentoController {
                 return ResponseEntity.badRequest().body("Erro: O veterinário já está ocupado nesse horário.");
             }
             if (dataHora.getMinute() != 0 && dataHora.getMinute() != 30) {
-                return ResponseEntity.badRequest().body("Erro: Consultas devem ser em intervalos de 30 min (ex: 14:00, 14:30).");
+                return ResponseEntity.badRequest()
+                        .body("Erro: Consultas devem ser em intervalos de 30 min (ex: 14:00, 14:30).");
             }
         } else {
             if (contagemBanho >= 2) {
@@ -143,7 +146,8 @@ public class AgendamentoController {
             }
         }
 
-        // Se passar por tudo, salva no banco e devolve o agendamento (com status "Pendente")
+        // Se passar por tudo, salva no banco e devolve o agendamento (com status
+        // "Pendente")
         return ResponseEntity.ok(agendamentoRepository.save(agendamento));
     }
 
@@ -152,6 +156,27 @@ public class AgendamentoController {
     public Agendamento atualizar(@PathVariable Long id, @RequestBody Agendamento agendamentoAtualizado) {
         agendamentoAtualizado.setId(id);
         return agendamentoRepository.save(agendamentoAtualizado);
+    }
+
+    // Atualiza apenas o status de um agendamento (fluxo do gerente)
+    @PatchMapping("/{id}/status")
+    public ResponseEntity<?> atualizarStatus(@PathVariable Long id, @RequestBody java.util.Map<String, String> body) {
+        String novoStatus = body.get("status");
+        if (novoStatus == null || novoStatus.isBlank()) {
+            return ResponseEntity.badRequest().body("Erro: campo 'status' é obrigatório.");
+        }
+
+        List<String> statusPermitidos = List.of("Pendente", "Aguardando", "Em Serviço", "Pronto");
+        if (!statusPermitidos.contains(novoStatus)) {
+            return ResponseEntity.badRequest().body("Erro: status inválido. Use: " + statusPermitidos);
+        }
+
+        return agendamentoRepository.findById(id)
+                .map(agendamento -> {
+                    agendamento.setStatus(novoStatus);
+                    return ResponseEntity.ok(agendamentoRepository.save(agendamento));
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
     // Remove um agendamento do banco
