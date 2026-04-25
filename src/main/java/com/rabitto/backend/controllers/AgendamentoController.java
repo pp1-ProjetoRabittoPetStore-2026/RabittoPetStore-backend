@@ -24,8 +24,8 @@ public class AgendamentoController {
     private ServicoRepository servicoRepository;
 
     // Lista todos os agendamentos salvos no banco
-    @GetMapping("/status/{status}")
-    public List<Agendamento> listar(@PathVariable String status) {
+    @GetMapping(value = { "/status", "/status/{status}" })
+    public List<Agendamento> listar(@PathVariable(required = false) String status) {
         if (status != null && !status.isEmpty()) {
             return agendamentoRepository.findByStatus(status);
         }
