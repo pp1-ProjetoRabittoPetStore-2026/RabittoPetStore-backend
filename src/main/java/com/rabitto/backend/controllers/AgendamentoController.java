@@ -25,7 +25,10 @@ public class AgendamentoController {
 
     // Lista todos os agendamentos salvos no banco
     @GetMapping
-    public List<Agendamento> listarTodos() {
+    public List<Agendamento> listar(@RequestParam(required = false) String status) {
+        if (status != null && !status.isEmpty()) {
+            return agendamentoRepository.findByStatus(status);
+        }
         return agendamentoRepository.findAll();
     }
 
