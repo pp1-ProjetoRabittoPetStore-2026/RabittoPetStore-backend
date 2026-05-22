@@ -11,4 +11,6 @@ public interface TutorRepository extends JpaRepository<Tutor, Long> {
 
     Optional<Tutor> findByEmail(String email);
 
+    Optional<Tutor> findByTelefone(String telefone);
+
 }
