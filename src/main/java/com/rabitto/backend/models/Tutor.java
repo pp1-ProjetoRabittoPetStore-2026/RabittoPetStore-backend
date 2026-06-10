@@ -1,5 +1,6 @@
 package com.rabitto.backend.models;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -17,6 +18,8 @@ public class Tutor {
     @Column(unique = true)
     private String email;
 
+    // Aceita no corpo da requisição (input), mas nunca é serializada na resposta
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String senha;
 
     @Column(unique = true)

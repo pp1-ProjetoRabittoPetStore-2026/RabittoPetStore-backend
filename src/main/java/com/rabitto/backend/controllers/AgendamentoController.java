@@ -1,9 +1,12 @@
 package com.rabitto.backend.controllers;
 
 import com.rabitto.backend.models.Agendamento;
+import com.rabitto.backend.models.Funcionario;
 import com.rabitto.backend.models.Servico;
 import com.rabitto.backend.repositories.AgendamentoRepository;
+import com.rabitto.backend.repositories.FuncionarioRepository;
 import com.rabitto.backend.repositories.ServicoRepository;
+import com.rabitto.backend.services.JwtService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -12,10 +15,15 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/agendamentos")
 public class AgendamentoController {
+
+    private static final List<String> STATUS_PERMITIDOS =
+            List.of("Pendente", "Aguardando", "Em Serviço", "Pronto", "Rejeitado", "Cancelado", "Confirmado");
 
     @Autowired
     private AgendamentoRepository agendamentoRepository;
@@ -23,71 +31,85 @@ public class AgendamentoController {
     @Autowired
     private ServicoRepository servicoRepository;
 
-    // Lista todos os agendamentos salvos no banco
+    @Autowired
+    private FuncionarioRepository funcionarioRepository;
+
+    @Autowired
+    private JwtService jwtService;
+
+    // Lista todos os agendamentos salvos no banco (opcionalmente por status)
     @GetMapping(value = { "/status", "/status/{status}" })
     public List<Agendamento> listar(@PathVariable(required = false) String status) {
-        if (status != null && !status.isEmpty()) {
-            return agendamentoRepository.findByStatus(status);
-        }
-        return agendamentoRepository.findAll();
+        List<Agendamento> lista = (status != null && !status.isEmpty())
+                ? agendamentoRepository.findByStatus(status)
+                : agendamentoRepository.findAll();
+        lista.forEach(this::sanitize);
+        return lista;
     }
 
-    // Rota para o aplicativo consultar quais horários estão livres em um dia
-    // específico
+    // Agenda do veterinario logado: apenas as consultas dele, em ordem cronologica
+    @GetMapping("/vet/agenda")
+    public List<Agendamento> agendaVet(
+            @RequestHeader(value = "Authorization", required = false) String header,
+            @RequestParam(required = false) LocalDate data) {
+        Long vetId = jwtService.extractUid(header);
+        LocalDate dia = data != null ? data : LocalDate.now();
+        LocalDateTime inicio = dia.atTime(0, 0);
+        LocalDateTime fim = dia.atTime(23, 59);
+
+        List<Agendamento> agenda = agendamentoRepository
+                .findByFuncionarioIdAndDataHoraBetweenOrderByDataHoraAsc(vetId, inicio, fim)
+                .stream()
+                .filter(a -> isVetServico(a.getServico()))
+                .collect(Collectors.toList());
+        agenda.forEach(this::sanitize);
+        return agenda;
+    }
+
+    // Agendamentos do tutor logado (todos os seus pets), em ordem cronologica
+    @GetMapping("/meus")
+    public List<Agendamento> meusAgendamentos(
+            @RequestHeader(value = "Authorization", required = false) String header) {
+        Long tutorId = jwtService.extractTutorId(header);
+        List<Agendamento> lista = agendamentoRepository.findByPetTutorIdOrderByDataHoraAsc(tutorId);
+        lista.forEach(this::sanitize);
+        return lista;
+    }
+
+    // Horarios livres em um dia para um servico (capacidade = profissionais ativos)
     @GetMapping("/horarios-disponiveis")
     public ResponseEntity<?> buscarHorariosDisponiveis(
             @RequestParam LocalDate data,
             @RequestParam Long servicoId) {
 
-        // 1. Busca o serviço pra saber se a regra é de Banhista ou Veterinário
         Servico servico = servicoRepository.findById(servicoId).orElse(null);
         if (servico == null) {
             return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
         }
 
-        boolean isVeterinario = servico.getNome().toLowerCase().contains("consulta") ||
-                servico.getNome().toLowerCase().contains("vacina");
+        boolean isVet = isVetServico(servico);
+        int capacidade = profissionaisDoSetor(isVet).size();
+        if (capacidade == 0) {
+            return ResponseEntity.ok(new ArrayList<String>()); // ninguem para atender
+        }
 
-        // 2. Define o período do expediente daquele dia (09:00 às 17:00)
         LocalDateTime inicioExpediente = data.atTime(9, 0);
         LocalDateTime fimExpediente = data.atTime(17, 0);
-
-        // 3. Puxa do banco tudo que já está ocupado nesse intervalo
-        List<Agendamento> agendamentosDoDia = agendamentoRepository.findByDataHoraBetween(inicioExpediente,
-                fimExpediente);
+        List<Agendamento> agendamentosDoDia =
+                agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
 
         List<String> horariosLivres = new ArrayList<>();
+        int[] minutos = isVet ? new int[] { 0, 30 } : new int[] { 0 };
 
-        if (isVeterinario) {
-            // Regra do VET: Slots de 30 min, limite de 1 profissional
-            for (int hora = 9; hora < 17; hora++) {
-                for (int min : new int[] { 0, 30 }) {
-                    LocalDateTime horarioVerificado = data.atTime(hora, min);
-
-                    long ocupados = agendamentosDoDia.stream()
-                            .filter(a -> a.getDataHora().equals(horarioVerificado))
-                            .filter(a -> a.getServico().getNome().toLowerCase().contains("consulta") ||
-                                    a.getServico().getNome().toLowerCase().contains("vacina"))
-                            .count();
-
-                    if (ocupados < 1) {
-                        horariosLivres.add(String.format("%02d:%02d", hora, min));
-                    }
-                }
-            }
-        } else {
-            // Regra do BANHO: Slots de 1h, limite de 2 profissionais
-            for (int hora = 9; hora < 17; hora++) {
-                LocalDateTime horarioVerificado = data.atTime(hora, 0);
-
+        for (int hora = 9; hora < 17; hora++) {
+            for (int min : minutos) {
+                LocalDateTime slot = data.atTime(hora, min);
                 long ocupados = agendamentosDoDia.stream()
-                        .filter(a -> a.getDataHora().equals(horarioVerificado))
-                        .filter(a -> !(a.getServico().getNome().toLowerCase().contains("consulta") ||
-                                a.getServico().getNome().toLowerCase().contains("vacina")))
+                        .filter(a -> a.getDataHora().equals(slot))
+                        .filter(a -> isVetServico(a.getServico()) == isVet)
                         .count();
-
-                if (ocupados < 2) {
-                    horariosLivres.add(String.format("%02d:00", hora));
+                if (ocupados < capacidade) {
+                    horariosLivres.add(String.format("%02d:%02d", hora, min));
                 }
             }
         }
@@ -95,96 +117,133 @@ public class AgendamentoController {
         return ResponseEntity.ok(horariosLivres);
     }
 
-    // Salva um agendamento novo aplicando as travas de segurança
+    // Cria um agendamento, designando um profissional livre do setor
     @PostMapping
     public ResponseEntity<?> salvar(@RequestBody Agendamento agendamento) {
         LocalDateTime dataHora = agendamento.getDataHora();
+        if (dataHora == null) {
+            return ResponseEntity.badRequest().body("Erro: dataHora é obrigatória.");
+        }
 
         // VALIDAÇÃO 1: Horário de funcionamento (09h às 17h)
         if (dataHora.getHour() < 9 || dataHora.getHour() >= 17) {
             return ResponseEntity.badRequest().body("Erro: O Rabitto funciona apenas das 09:00 às 17:00.");
         }
 
+        if (agendamento.getServico() == null || agendamento.getServico().getId() == null) {
+            return ResponseEntity.badRequest().body("Erro: Serviço é obrigatório.");
+        }
         Servico servicoEscolhido = servicoRepository.findById(agendamento.getServico().getId()).orElse(null);
         if (servicoEscolhido == null) {
             return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
         }
+        boolean isVet = isVetServico(servicoEscolhido);
 
-        String nomeServico = servicoEscolhido.getNome().toLowerCase();
-        boolean isVeterinario = nomeServico.contains("consulta") || nomeServico.contains("vacina");
-
-        // Busca agendamentos que já existem exatamente na mesma hora
-        List<Agendamento> agendamentosNoHorario = agendamentoRepository.findByDataHora(dataHora);
-
-        int contagemVet = 0;
-        int contagemBanho = 0;
-
-        for (Agendamento agendado : agendamentosNoHorario) {
-            Servico servicoAgendado = servicoRepository.findById(agendado.getServico().getId()).orElse(null);
-            if (servicoAgendado != null) {
-                String nomeAgendado = servicoAgendado.getNome().toLowerCase();
-                if (nomeAgendado.contains("consulta") || nomeAgendado.contains("vacina")) {
-                    contagemVet++;
-                } else {
-                    contagemBanho++;
-                }
-            }
-        }
-
-        // VALIDAÇÃO 2: Limites de funcionários e duração dos slots
-        if (isVeterinario) {
-            if (contagemVet >= 1) {
-                return ResponseEntity.badRequest().body("Erro: O veterinário já está ocupado nesse horário.");
-            }
+        // VALIDAÇÃO 2: Granularidade do slot
+        if (isVet) {
             if (dataHora.getMinute() != 0 && dataHora.getMinute() != 30) {
                 return ResponseEntity.badRequest()
                         .body("Erro: Consultas devem ser em intervalos de 30 min (ex: 14:00, 14:30).");
             }
         } else {
-            if (contagemBanho >= 2) {
-                return ResponseEntity.badRequest().body("Erro: Todos os banhistas já estão ocupados nesse horário.");
-            }
             if (dataHora.getMinute() != 0) {
                 return ResponseEntity.badRequest().body("Erro: Banhos devem ser marcados em hora cheia (ex: 10:00).");
             }
         }
 
-        // Se passar por tudo, salva no banco e devolve o agendamento (com status
-        // "Pendente")
-        return ResponseEntity.ok(agendamentoRepository.save(agendamento));
+        // VALIDAÇÃO 3: Designar um profissional livre (previne sobreposição por profissional)
+        List<Funcionario> profissionais = profissionaisDoSetor(isVet);
+        if (profissionais.isEmpty()) {
+            return ResponseEntity.badRequest().body(isVet
+                    ? "Erro: Nenhum veterinário disponível na clínica."
+                    : "Erro: Nenhum tosador disponível na loja.");
+        }
+
+        Set<Long> ocupadosIds = agendamentoRepository.findByDataHora(dataHora).stream()
+                .filter(a -> a.getFuncionario() != null)
+                .map(a -> a.getFuncionario().getId())
+                .collect(Collectors.toSet());
+
+        Funcionario livre = profissionais.stream()
+                .filter(f -> !ocupadosIds.contains(f.getId()))
+                .findFirst()
+                .orElse(null);
+
+        if (livre == null) {
+            return ResponseEntity.badRequest().body(isVet
+                    ? "Erro: O veterinário já está ocupado nesse horário."
+                    : "Erro: Todos os tosadores já estão ocupados nesse horário.");
+        }
+
+        agendamento.setServico(servicoEscolhido);
+        agendamento.setFuncionario(livre);
+        if (agendamento.getStatus() == null || agendamento.getStatus().isBlank()) {
+            agendamento.setStatus("Pendente");
+        }
+
+        Agendamento salvo = agendamentoRepository.save(agendamento);
+        sanitize(salvo);
+        return ResponseEntity.ok(salvo);
     }
 
-    // Atualiza um agendamento (Ex: Gerente aprova mudando o status)
     @PutMapping("/{id}")
     public Agendamento atualizar(@PathVariable Long id, @RequestBody Agendamento agendamentoAtualizado) {
         agendamentoAtualizado.setId(id);
-        return agendamentoRepository.save(agendamentoAtualizado);
+        Agendamento salvo = agendamentoRepository.save(agendamentoAtualizado);
+        sanitize(salvo);
+        return salvo;
     }
 
-    // Atualiza apenas o status de um agendamento (fluxo do gerente)
     @PatchMapping("/{id}/status")
     public ResponseEntity<?> atualizarStatus(@PathVariable Long id, @RequestBody java.util.Map<String, String> body) {
         String novoStatus = body.get("status");
         if (novoStatus == null || novoStatus.isBlank()) {
             return ResponseEntity.badRequest().body("Erro: campo 'status' é obrigatório.");
         }
-
-        List<String> statusPermitidos = List.of("Pendente", "Aguardando", "Em Serviço", "Pronto");
-        if (!statusPermitidos.contains(novoStatus)) {
-            return ResponseEntity.badRequest().body("Erro: status inválido. Use: " + statusPermitidos);
+        if (!STATUS_PERMITIDOS.contains(novoStatus)) {
+            return ResponseEntity.badRequest().body("Erro: status inválido. Use: " + STATUS_PERMITIDOS);
         }
 
         return agendamentoRepository.findById(id)
                 .map(agendamento -> {
                     agendamento.setStatus(novoStatus);
-                    return ResponseEntity.ok(agendamentoRepository.save(agendamento));
+                    Agendamento salvo = agendamentoRepository.save(agendamento);
+                    sanitize(salvo);
+                    return ResponseEntity.ok(salvo);
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // Remove um agendamento do banco
     @DeleteMapping("/{id}")
     public void deletar(@PathVariable Long id) {
         agendamentoRepository.deleteById(id);
+    }
+
+    // ---- helpers ----
+
+    private boolean isVetServico(Servico servico) {
+        if (servico == null || servico.getNome() == null) {
+            return false;
+        }
+        String nome = servico.getNome().toLowerCase();
+        return nome.contains("consulta") || nome.contains("vacina");
+    }
+
+    private List<Funcionario> profissionaisDoSetor(boolean isVet) {
+        return funcionarioRepository.findByAtivoTrue().stream()
+                .filter(f -> {
+                    String cargo = f.getCargo() == null ? "" : f.getCargo().toUpperCase();
+                    return isVet
+                            ? cargo.contains("VETERIN")
+                            : (cargo.contains("TOSAD") || cargo.contains("BANHIST"));
+                })
+                .toList();
+    }
+
+    /** Remove dados sensiveis do profissional antes de serializar. */
+    private void sanitize(Agendamento a) {
+        if (a != null && a.getFuncionario() != null) {
+            a.getFuncionario().setSenha(null);
+        }
     }
 }

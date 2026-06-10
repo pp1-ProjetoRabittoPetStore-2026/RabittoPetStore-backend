@@ -1,26 +1,25 @@
 package com.rabitto.backend.controllers;
 
 import com.rabitto.backend.models.Auth;
+import com.rabitto.backend.models.Funcionario;
 import com.rabitto.backend.models.Tutor;
 import com.rabitto.backend.repositories.AuthRepository;
+import com.rabitto.backend.repositories.FuncionarioRepository;
 import com.rabitto.backend.repositories.TutorRepository;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
+import com.rabitto.backend.security.Roles;
+import com.rabitto.backend.services.JwtService;
 import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Date;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,15 +34,19 @@ public class AuthController {
     private TutorRepository tutorRepository;
 
     @Autowired
+    private FuncionarioRepository funcionarioRepository;
+
+    @Autowired
     private AuthRepository authRepository;
 
-    private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private JwtService jwtService;
 
     @Value("${app.auth.jwt-secret:change-this-secret-key-with-at-least-32-characters}")
     private String jwtSecret;
-
-    @Value("${app.auth.access-token-minutes:15}")
-    private long accessTokenMinutes;
 
     @Value("${app.auth.refresh-token-days:7}")
     private long refreshTokenDays;
@@ -55,40 +58,83 @@ public class AuthController {
         }
     }
 
+    // ----- Login do tutor (app mobile) -----
     @PostMapping("/login")
     @Transactional
     @CrossOrigin(origins = "*")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         Optional<Tutor> tutorOpt = tutorRepository.findByEmail(request.email());
-        if (tutorOpt.isEmpty()) {
+        if (tutorOpt.isEmpty() || !isPasswordValid(request.senha(), tutorOpt.get().getSenha())) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", "Email ou senha invalidos"));
         }
 
         Tutor tutor = tutorOpt.get();
-        if (!isPasswordValid(request.senha(), tutor.getSenha())) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Email ou senha invalidos"));
-        }
-
         authRepository.deleteByTutorId(tutor.getId());
         Auth refreshSession = buildRefreshSession(tutor);
         authRepository.save(refreshSession);
 
-        TokenResponse tokenResponse = buildTokenResponse(tutor, refreshSession.getRefreshToken());
-        return ResponseEntity.ok(tokenResponse);
+        String accessToken = jwtService.generateAccessToken(tutor.getId(), tutor.getEmail(), Roles.TUTOR);
+        return ResponseEntity.ok(new TokenResponse(
+                accessToken, refreshSession.getRefreshToken(), TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
+    }
+
+    // ----- Login do funcionario (back-office web): por email ou CPF -----
+    @PostMapping("/staff/login")
+    @CrossOrigin(origins = "*")
+    public ResponseEntity<?> staffLogin(@RequestBody LoginRequest request) {
+        String identifier = request.email();
+        Optional<Funcionario> funcOpt = funcionarioRepository.findByEmail(identifier);
+        if (funcOpt.isEmpty()) {
+            funcOpt = funcionarioRepository.findByCpf(identifier);
+        }
+
+        if (funcOpt.isEmpty() || !Boolean.TRUE.equals(funcOpt.get().getAtivo())
+                || !isPasswordValid(request.senha(), funcOpt.get().getSenha())) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("message", "Credenciais invalidas"));
+        }
+
+        Funcionario func = funcOpt.get();
+        String role = normalizeRole(func.getCargo());
+        String subject = func.getEmail() != null ? func.getEmail() : func.getCpf();
+        String accessToken = jwtService.generateAccessToken(func.getId(), subject, role);
+
+        return ResponseEntity.ok(new TokenResponse(
+                accessToken, "", TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
+    }
+
+    // ----- Dados do usuario logado -----
+    @GetMapping("/me")
+    public ResponseEntity<?> me(@RequestHeader(value = "Authorization", required = false) String header) {
+        var claims = jwtService.parse(header);
+        String role = claims.get("role", String.class);
+        Long uid = claims.get("uid", Number.class).longValue();
+
+        if (Roles.TUTOR.equals(role)) {
+            Tutor t = tutorRepository.findById(uid).orElse(null);
+            return ResponseEntity.ok(Map.of(
+                    "id", uid, "role", role,
+                    "nome", t != null ? t.getNome() : "",
+                    "email", t != null ? t.getEmail() : ""));
+        }
+        Funcionario f = funcionarioRepository.findById(uid).orElse(null);
+        return ResponseEntity.ok(Map.of(
+                "id", uid, "role", role == null ? "" : role,
+                "nome", f != null && f.getNome() != null ? f.getNome() : "",
+                "cargo", f != null && f.getCargo() != null ? f.getCargo() : ""));
     }
 
     @PostMapping("/logout")
     @Transactional
-    public ResponseEntity<?> logout(@RequestBody RefreshRequest request) {
-        Optional<Auth> tokenOpt = authRepository.findByRefreshTokenAndRevokedFalse(request.refreshToken());
-        if (tokenOpt.isPresent()) {
-            Auth token = tokenOpt.get();
-            token.setRevoked(true);
-            authRepository.save(token);
+    public ResponseEntity<?> logout(@RequestBody(required = false) RefreshRequest request) {
+        if (request != null && request.refreshToken() != null) {
+            authRepository.findByRefreshTokenAndRevokedFalse(request.refreshToken())
+                    .ifPresent(token -> {
+                        token.setRevoked(true);
+                        authRepository.save(token);
+                    });
         }
-
         return ResponseEntity.ok(Map.of("message", "Logout realizado com sucesso"));
     }
 
@@ -116,21 +162,34 @@ public class AuthController {
         Auth newRefreshSession = buildRefreshSession(tutor);
         authRepository.save(newRefreshSession);
 
-        TokenResponse tokenResponse = buildTokenResponse(tutor, newRefreshSession.getRefreshToken());
-        return ResponseEntity.ok(tokenResponse);
+        String accessToken = jwtService.generateAccessToken(tutor.getId(), tutor.getEmail(), Roles.TUTOR);
+        return ResponseEntity.ok(new TokenResponse(
+                accessToken, newRefreshSession.getRefreshToken(), TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
     }
 
     private boolean isPasswordValid(String rawPassword, String storedPassword) {
         if (rawPassword == null || storedPassword == null) {
             return false;
         }
-
         if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$")
                 || storedPassword.startsWith("$2y$")) {
             return passwordEncoder.matches(rawPassword, storedPassword);
         }
-
+        // Compatibilidade com senhas antigas em texto plano (legado)
         return rawPassword.equals(storedPassword);
+    }
+
+    /** Normaliza o cargo do funcionario para um codigo de papel valido. */
+    private String normalizeRole(String cargo) {
+        if (cargo == null) {
+            return Roles.CAIXA;
+        }
+        String c = cargo.trim().toUpperCase();
+        if (c.contains("GEREN")) return Roles.GERENTE;
+        if (c.contains("VETERIN")) return Roles.VETERINARIO;
+        if (c.contains("TOSAD") || c.contains("BANHIST")) return Roles.TOSADOR;
+        if (c.contains("CAIXA")) return Roles.CAIXA;
+        return Roles.STAFF.contains(c) ? c : Roles.CAIXA;
     }
 
     private Auth buildRefreshSession(Tutor tutor) {
@@ -142,26 +201,6 @@ public class AuthController {
         return auth;
     }
 
-    private TokenResponse buildTokenResponse(Tutor tutor, String refreshToken) {
-        Instant now = Instant.now();
-        Instant accessTokenExpiresAt = now.plus(accessTokenMinutes, ChronoUnit.MINUTES);
-
-        String accessToken = Jwts.builder()
-                .subject(tutor.getEmail())
-                .claim("tutorId", tutor.getId())
-                .issuedAt(Date.from(now))
-                .expiration(Date.from(accessTokenExpiresAt))
-                .signWith(getSigningKey())
-                .compact();
-
-        long expiresInSeconds = ChronoUnit.SECONDS.between(now, accessTokenExpiresAt);
-        return new TokenResponse(accessToken, refreshToken, TOKEN_TYPE, expiresInSeconds);
-    }
-
-    private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-    }
-
     public record LoginRequest(String email, String senha) {
     }
 
@@ -170,5 +209,4 @@ public class AuthController {
 
     public record TokenResponse(String accessToken, String refreshToken, String tokenType, long expiresIn) {
     }
-
 }

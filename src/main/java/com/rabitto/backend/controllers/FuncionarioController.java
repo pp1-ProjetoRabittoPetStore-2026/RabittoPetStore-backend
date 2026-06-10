@@ -6,6 +6,7 @@ import com.rabitto.backend.repositories.AgendamentoRepository;
 import com.rabitto.backend.repositories.FuncionarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/funcionarios")
@@ -25,30 +27,68 @@ public class FuncionarioController {
     @Autowired
     private AgendamentoRepository agendamentoRepository;
 
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
     @GetMapping
     public List<Funcionario> listarTodos() {
-        return repository.findAll();
+        List<Funcionario> todos = repository.findAll();
+        todos.forEach(f -> f.setSenha(null));
+        return todos;
     }
 
     @PostMapping
     public Funcionario salvar(@RequestBody Funcionario funcionario) {
-        if (repository.findByCpf(funcionario.getCpf()).isPresent()) {
+        if (funcionario.getCpf() != null && repository.findByCpf(funcionario.getCpf()).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Este CPF já está cadastrado");
         }
-        return repository.save(funcionario);
+        if (funcionario.getEmail() != null && repository.findByEmail(funcionario.getEmail()).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Este email já está cadastrado");
+        }
+        if (funcionario.getSenha() != null && !funcionario.getSenha().isBlank()) {
+            funcionario.setSenha(passwordEncoder.encode(funcionario.getSenha()));
+        }
+        Funcionario salvo = repository.save(funcionario);
+        salvo.setSenha(null);
+        return salvo;
     }
 
     @PutMapping("/{id}")
-    public Funcionario atualizar(@PathVariable Long id, @RequestBody Funcionario funcionarioAtualizado) {
-        repository.findById(id)
+    public Funcionario atualizar(@PathVariable Long id, @RequestBody Funcionario dados) {
+        Funcionario existente = repository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Funcionário não encontrado"));
-        funcionarioAtualizado.setId(id);
-        repository.findByCpf(funcionarioAtualizado.getCpf()).ifPresent(existing -> {
-            if (!existing.getId().equals(id)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Este CPF já está cadastrado");
-            }
-        });
-        return repository.save(funcionarioAtualizado);
+
+        if (dados.getCpf() != null) {
+            repository.findByCpf(dados.getCpf()).ifPresent(other -> {
+                if (!other.getId().equals(id)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Este CPF já está cadastrado");
+                }
+            });
+        }
+        if (dados.getEmail() != null) {
+            repository.findByEmail(dados.getEmail()).ifPresent(other -> {
+                if (!other.getId().equals(id)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Este email já está cadastrado");
+                }
+            });
+        }
+
+        existente.setNome(dados.getNome());
+        existente.setCargo(dados.getCargo());
+        existente.setCpf(dados.getCpf());
+        existente.setEmail(dados.getEmail());
+        existente.setTelefone(dados.getTelefone());
+        if (dados.getAtivo() != null) {
+            existente.setAtivo(dados.getAtivo());
+        }
+        // So troca a senha se vier preenchida
+        if (dados.getSenha() != null && !dados.getSenha().isBlank()) {
+            existente.setSenha(passwordEncoder.encode(dados.getSenha()));
+        }
+
+        Funcionario salvo = repository.save(existente);
+        salvo.setSenha(null);
+        return salvo;
     }
 
     @DeleteMapping("/{id}")
@@ -59,38 +99,40 @@ public class FuncionarioController {
         repository.save(funcionario);
     }
 
-    // Retorna cada funcionário ativo (vet/banhista) com seus agendamentos do dia
+    // Retorna cada profissional ativo (vet/tosador) com seus agendamentos do dia
     @GetMapping("/agenda")
     public List<Map<String, Object>> agenda(@RequestParam(required = false) LocalDate data) {
         LocalDate dia = data != null ? data : LocalDate.now();
-        LocalDateTime inicio = dia.atTime(9, 0);
-        LocalDateTime fim = dia.atTime(17, 0);
+        LocalDateTime inicio = dia.atTime(0, 0);
+        LocalDateTime fim = dia.atTime(23, 59);
 
-        List<Agendamento> agendamentosDoDia = agendamentoRepository.findByDataHoraBetween(inicio, fim);
+        List<Agendamento> agendamentosDoDia =
+                agendamentoRepository.findByDataHoraBetweenOrderByDataHoraAsc(inicio, fim);
 
-        return repository.findAll().stream()
-                .filter(f -> Boolean.TRUE.equals(f.getAtivo()))
-                .filter(f -> f.getCargo() != null && (
-                        f.getCargo().toLowerCase().contains("veterinário") ||
-                        f.getCargo().toLowerCase().contains("veterinario") ||
-                        f.getCargo().toLowerCase().contains("banhista")))
+        return repository.findByAtivoTrue().stream()
+                .filter(f -> isVet(f.getCargo()) || isTosador(f.getCargo()))
                 .map(func -> {
-                    boolean isVet = func.getCargo().toLowerCase().contains("veterinário") ||
-                                    func.getCargo().toLowerCase().contains("veterinario");
-
                     List<Agendamento> agendamentos = agendamentosDoDia.stream()
-                            .filter(a -> {
-                                String nomeServico = a.getServico().getNome().toLowerCase();
-                                boolean agendVet = nomeServico.contains("consulta") || nomeServico.contains("vacina");
-                                return isVet == agendVet;
-                            })
+                            .filter(a -> a.getFuncionario() != null
+                                    && Objects.equals(a.getFuncionario().getId(), func.getId()))
+                            .peek(a -> { if (a.getFuncionario() != null) a.getFuncionario().setSenha(null); })
                             .toList();
 
+                    func.setSenha(null);
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("funcionario", func);
                     item.put("agendamentos", agendamentos);
                     return item;
                 })
                 .toList();
+    }
+
+    private boolean isVet(String cargo) {
+        return cargo != null && cargo.toUpperCase().contains("VETERIN");
+    }
+
+    private boolean isTosador(String cargo) {
+        String c = cargo == null ? "" : cargo.toUpperCase();
+        return c.contains("TOSAD") || c.contains("BANHIST");
     }
 }

@@ -25,4 +25,10 @@ public class Agendamento {
     @ManyToOne
     @JoinColumn(name = "servico_id")
     private Servico servico;
+
+    // Profissional designado para o atendimento. Garante a prevencao de
+    // sobreposicao de horario por profissional (atribuido na criacao).
+    @ManyToOne
+    @JoinColumn(name = "funcionario_id")
+    private Funcionario funcionario;
 }
