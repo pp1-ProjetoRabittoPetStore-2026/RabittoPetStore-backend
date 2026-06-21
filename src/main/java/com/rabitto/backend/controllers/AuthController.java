@@ -66,7 +66,7 @@ public class AuthController {
         Optional<Tutor> tutorOpt = tutorRepository.findByEmail(request.email());
         if (tutorOpt.isEmpty() || !isPasswordValid(request.senha(), tutorOpt.get().getSenha())) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Email ou senha invalidos"));
+                    .body(Map.of("error", "Email ou senha invalidos"));
         }
 
         Tutor tutor = tutorOpt.get();
@@ -89,10 +89,13 @@ public class AuthController {
             funcOpt = funcionarioRepository.findByCpf(identifier);
         }
 
-        if (funcOpt.isEmpty() || !Boolean.TRUE.equals(funcOpt.get().getAtivo())
-                || !isPasswordValid(request.senha(), funcOpt.get().getSenha())) {
+        if (funcOpt.isEmpty() || !isPasswordValid(request.senha(), funcOpt.get().getSenha())) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Credenciais invalidas"));
+                    .body(Map.of("error", "Credenciais invalidas"));
+        }
+        if (!Boolean.TRUE.equals(funcOpt.get().getAtivo())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Conta inativa. Contate o administrador"));
         }
 
         Funcionario func = funcOpt.get();
@@ -140,11 +143,16 @@ public class AuthController {
 
     @PostMapping("/refresh")
     @Transactional
-    public ResponseEntity<?> refresh(@RequestBody RefreshRequest request) {
+    public ResponseEntity<?> refresh(@RequestBody(required = false) RefreshRequest request) {
+        if (request == null || request.refreshToken() == null || request.refreshToken().isBlank()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Refresh token invalido"));
+        }
+
         Optional<Auth> tokenOpt = authRepository.findByRefreshTokenAndRevokedFalse(request.refreshToken());
         if (tokenOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Refresh token invalido"));
+                    .body(Map.of("error", "Refresh token invalido"));
         }
 
         Auth currentToken = tokenOpt.get();
@@ -152,7 +160,7 @@ public class AuthController {
             currentToken.setRevoked(true);
             authRepository.save(currentToken);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Refresh token expirado"));
+                    .body(Map.of("error", "Refresh token expirado"));
         }
 
         currentToken.setRevoked(true);
