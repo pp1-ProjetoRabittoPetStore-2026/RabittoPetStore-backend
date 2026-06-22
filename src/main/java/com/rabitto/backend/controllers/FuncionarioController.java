@@ -113,9 +113,9 @@ public class FuncionarioController {
                 .filter(f -> isVet(f.getCargo()) || isTosador(f.getCargo()))
                 .map(func -> {
                     List<Agendamento> agendamentos = agendamentosDoDia.stream()
-                            .filter(a -> a.getFuncionario() != null
-                                    && Objects.equals(a.getFuncionario().getId(), func.getId()))
-                            .peek(a -> { if (a.getFuncionario() != null) a.getFuncionario().setSenha(null); })
+                            .filter(a -> a.getFuncionarios().stream()
+                                    .anyMatch(f -> Objects.equals(f.getId(), func.getId())))
+                            .peek(a -> a.getFuncionarios().forEach(f -> f.setSenha(null)))
                             .toList();
 
                     func.setSenha(null);

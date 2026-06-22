@@ -20,7 +20,7 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, Long> 
     List<Agendamento> findByStatus(String status);
 
     // Agendamentos de um profissional especifico no intervalo (agenda do vet)
-    List<Agendamento> findByFuncionarioIdAndDataHoraBetweenOrderByDataHoraAsc(
+    List<Agendamento> findByFuncionariosIdAndDataHoraBetweenOrderByDataHoraAsc(
             Long funcionarioId, LocalDateTime inicio, LocalDateTime fim);
 
     // Agendamentos dos pets de um tutor (app mobile)
