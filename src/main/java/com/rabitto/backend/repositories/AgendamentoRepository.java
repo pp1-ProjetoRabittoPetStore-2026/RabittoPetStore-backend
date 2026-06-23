@@ -30,4 +30,9 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, Long> 
     
 
     List<Agendamento> findByPetTutorIdOrderByDataHoraAsc(Long tutorId);
+
+
+
+    List<Agendamento> findByPetIdAndDataHoraAndServicosIdIn(
+            Long petId, LocalDateTime dataHora, List<Long> servicoIds);
 }

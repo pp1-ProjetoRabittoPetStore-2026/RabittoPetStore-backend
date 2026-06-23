@@ -8,7 +8,9 @@ import com.rabitto.backend.repositories.FuncionarioRepository;
 import com.rabitto.backend.repositories.ServicoRepository;
 import com.rabitto.backend.services.JwtService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -152,6 +154,7 @@ public class AgendamentoController {
     
 
     @PostMapping
+    @Transactional
     public ResponseEntity<?> salvar(@RequestBody Agendamento agendamento) {
         LocalDateTime dataHora = agendamento.getDataHora();
         if (dataHora == null) {
@@ -181,10 +184,25 @@ public class AgendamentoController {
             return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
         }
 
+
+
+        Long petId = agendamento.getPet() != null ? agendamento.getPet().getId() : null;
+        if (petId == null) {
+            return ResponseEntity.badRequest().body("Erro: Pet é obrigatório.");
+        }
+        boolean duplicado = agendamentoRepository
+                .findByPetIdAndDataHoraAndServicosIdIn(petId, dataHora, servicoIds)
+                .stream()
+                .anyMatch(this::ocupaCapacidade);
+        if (duplicado) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Erro: Este pet já possui um agendamento para um destes serviços neste horário.");
+        }
+
         boolean precisaVet = servicosEscolhidos.stream().anyMatch(this::isVetServico);
         boolean precisaBanho = servicosEscolhidos.stream().anyMatch(s -> !isVetServico(s));
 
-        
+
 
         if (precisaBanho) {
             if (dataHora.getMinute() != 0) {
