@@ -40,7 +40,8 @@ public class TutorController {
         return salvo;
     }
 
-    // ----- Perfil do proprio tutor logado -----
+    
+
     @GetMapping("/me")
     public Tutor meuPerfil(@RequestHeader(value = "Authorization", required = false) String header) {
         Long tutorId = jwtService.extractTutorId(header);
@@ -79,7 +80,8 @@ public class TutorController {
         existente.setNome(dados.getNome());
         existente.setEmail(dados.getEmail());
         existente.setTelefone(dados.getTelefone());
-        // So troca a senha se vier preenchida
+        
+
         if (dados.getSenha() != null && !dados.getSenha().isBlank()) {
             existente.setSenha(passwordEncoder.encode(dados.getSenha()));
         }

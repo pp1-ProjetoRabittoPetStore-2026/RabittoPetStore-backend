@@ -25,6 +25,10 @@ public class AgendamentoController {
     private static final List<String> STATUS_PERMITIDOS =
             List.of("Pendente", "Aguardando", "Em Serviço", "Pronto", "Rejeitado", "Cancelado", "Confirmado");
 
+    
+
+    private static final Set<String> STATUS_LIBERADOS = Set.of("Rejeitado", "Cancelado");
+
     @Autowired
     private AgendamentoRepository agendamentoRepository;
 
@@ -37,7 +41,8 @@ public class AgendamentoController {
     @Autowired
     private JwtService jwtService;
 
-    // Lista todos os agendamentos salvos no banco (opcionalmente por status)
+    
+
     @GetMapping(value = { "/status", "/status/{status}" })
     public List<Agendamento> listar(@PathVariable(required = false) String status) {
         List<Agendamento> lista = (status != null && !status.isEmpty())
@@ -47,7 +52,8 @@ public class AgendamentoController {
         return lista;
     }
 
-    // Agenda do veterinario logado: apenas as consultas dele, em ordem cronologica
+    
+
     @GetMapping("/vet/agenda")
     public List<Agendamento> agendaVet(
             @RequestHeader(value = "Authorization", required = false) String header,
@@ -66,7 +72,8 @@ public class AgendamentoController {
         return agenda;
     }
 
-    // Agendamentos do tutor logado (todos os seus pets), em ordem cronologica
+    
+
     @GetMapping("/meus")
     public List<Agendamento> meusAgendamentos(
             @RequestHeader(value = "Authorization", required = false) String header) {
@@ -76,9 +83,12 @@ public class AgendamentoController {
         return lista;
     }
 
-    // Horarios livres em um dia para um ou mais servicos.
-    // Um agendamento pode misturar setores (ex: Consulta + Banho); o horario
-    // so e livre se houver capacidade em TODOS os setores envolvidos.
+    
+
+    
+
+    
+
     @GetMapping("/horarios-disponiveis")
     public ResponseEntity<?> buscarHorariosDisponiveis(
             @RequestParam LocalDate data,
@@ -99,7 +109,8 @@ public class AgendamentoController {
         int capVet = precisaVet ? profissionaisDoSetor(true).size() : Integer.MAX_VALUE;
         int capBanho = precisaBanho ? profissionaisDoSetor(false).size() : Integer.MAX_VALUE;
         if ((precisaVet && capVet == 0) || (precisaBanho && capBanho == 0)) {
-            return ResponseEntity.ok(new ArrayList<String>()); // setor sem ninguem para atender
+            return ResponseEntity.ok(new ArrayList<String>()); 
+
         }
 
         LocalDateTime inicioExpediente = data.atTime(9, 0);
@@ -108,7 +119,8 @@ public class AgendamentoController {
                 agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
 
         List<String> horariosLivres = new ArrayList<>();
-        // Banho so em hora cheia; consultas aceitam 30 min. Misto => hora cheia.
+        
+
         int[] minutos = precisaBanho ? new int[] { 0 } : new int[] { 0, 30 };
 
         for (int hora = 9; hora < 17; hora++) {
@@ -116,6 +128,7 @@ public class AgendamentoController {
                 LocalDateTime slot = data.atTime(hora, min);
                 List<Agendamento> noSlot = agendamentosDoDia.stream()
                         .filter(a -> a.getDataHora().equals(slot))
+                        .filter(this::ocupaCapacidade)
                         .collect(Collectors.toList());
 
                 long ocupVet = noSlot.stream()
@@ -136,7 +149,8 @@ public class AgendamentoController {
         return ResponseEntity.ok(horariosLivres);
     }
 
-    // Cria um agendamento, designando um profissional livre do setor
+    
+
     @PostMapping
     public ResponseEntity<?> salvar(@RequestBody Agendamento agendamento) {
         LocalDateTime dataHora = agendamento.getDataHora();
@@ -144,12 +158,14 @@ public class AgendamentoController {
             return ResponseEntity.badRequest().body("Erro: dataHora é obrigatória.");
         }
 
-        // VALIDAÇÃO 1: Horário de funcionamento (09h às 17h)
+        
+
         if (dataHora.getHour() < 9 || dataHora.getHour() >= 17) {
             return ResponseEntity.badRequest().body("Erro: O Rabitto funciona apenas das 09:00 às 17:00.");
         }
 
-        // VALIDAÇÃO 2: Servicos selecionados (um ou mais)
+        
+
         if (agendamento.getServicos() == null || agendamento.getServicos().isEmpty()) {
             return ResponseEntity.badRequest().body("Erro: Selecione ao menos um serviço.");
         }
@@ -168,7 +184,8 @@ public class AgendamentoController {
         boolean precisaVet = servicosEscolhidos.stream().anyMatch(this::isVetServico);
         boolean precisaBanho = servicosEscolhidos.stream().anyMatch(s -> !isVetServico(s));
 
-        // VALIDAÇÃO 3: Granularidade do slot (banho => hora cheia; misto => hora cheia)
+        
+
         if (precisaBanho) {
             if (dataHora.getMinute() != 0) {
                 return ResponseEntity.badRequest().body("Erro: Banhos devem ser marcados em hora cheia (ex: 10:00).");
@@ -178,8 +195,10 @@ public class AgendamentoController {
                     .body("Erro: Consultas devem ser em intervalos de 30 min (ex: 14:00, 14:30).");
         }
 
-        // VALIDAÇÃO 4: Designar um profissional livre por setor envolvido
+        
+
         Set<Long> ocupadosIds = agendamentoRepository.findByDataHora(dataHora).stream()
+                .filter(this::ocupaCapacidade)
                 .flatMap(a -> a.getFuncionarios().stream())
                 .map(Funcionario::getId)
                 .collect(Collectors.toSet());
@@ -260,7 +279,13 @@ public class AgendamentoController {
         agendamentoRepository.deleteById(id);
     }
 
-    // ---- helpers ----
+    
+
+
+    
+    private boolean ocupaCapacidade(Agendamento a) {
+        return a != null && (a.getStatus() == null || !STATUS_LIBERADOS.contains(a.getStatus()));
+    }
 
     private boolean isVetServico(Servico servico) {
         if (servico == null || servico.getNome() == null) {
@@ -281,7 +306,7 @@ public class AgendamentoController {
                 .toList();
     }
 
-    /** Remove dados sensiveis do profissional antes de serializar. */
+    
     private void sanitize(Agendamento a) {
         if (a != null && a.getFuncionarios() != null) {
             a.getFuncionarios().forEach(f -> {

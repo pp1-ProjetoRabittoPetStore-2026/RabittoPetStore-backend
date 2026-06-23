@@ -15,8 +15,10 @@ public class Pet {
     private String nome;
     private String raca;
     private String porte;
-    private String especie; // Ex: Cachorro, Gato, Calopsita
-    private Integer idade;  // Idade em anos (ou meses String)
+    private String especie; 
+
+    private Integer idade;  
+
 
     @ManyToOne
     @JoinColumn(name = "tutor_id")

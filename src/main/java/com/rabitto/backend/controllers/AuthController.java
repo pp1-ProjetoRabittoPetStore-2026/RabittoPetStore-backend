@@ -58,7 +58,8 @@ public class AuthController {
         }
     }
 
-    // ----- Login do tutor (app mobile) -----
+    
+
     @PostMapping("/login")
     @Transactional
     @CrossOrigin(origins = "*")
@@ -79,7 +80,8 @@ public class AuthController {
                 accessToken, refreshSession.getRefreshToken(), TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
     }
 
-    // ----- Login do funcionario (back-office web): por email ou CPF -----
+    
+
     @PostMapping("/staff/login")
     @CrossOrigin(origins = "*")
     public ResponseEntity<?> staffLogin(@RequestBody LoginRequest request) {
@@ -107,7 +109,8 @@ public class AuthController {
                 accessToken, "", TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
     }
 
-    // ----- Dados do usuario logado -----
+    
+
     @GetMapping("/me")
     public ResponseEntity<?> me(@RequestHeader(value = "Authorization", required = false) String header) {
         var claims = jwtService.parse(header);
@@ -183,11 +186,12 @@ public class AuthController {
                 || storedPassword.startsWith("$2y$")) {
             return passwordEncoder.matches(rawPassword, storedPassword);
         }
-        // Compatibilidade com senhas antigas em texto plano (legado)
+        
+
         return rawPassword.equals(storedPassword);
     }
 
-    /** Normaliza o cargo do funcionario para um codigo de papel valido. */
+    
     private String normalizeRole(String cargo) {
         if (cargo == null) {
             return Roles.CAIXA;

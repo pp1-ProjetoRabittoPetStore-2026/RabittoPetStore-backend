@@ -8,6 +8,7 @@ import java.util.List;
 
 @Repository
 public interface PetRepository extends JpaRepository<Pet, Long> {
-    // Esse comando aqui faz a listagem dos pets de um dono específico
+    
+
     List<Pet> findByTutorId(Long tutorId);
 }

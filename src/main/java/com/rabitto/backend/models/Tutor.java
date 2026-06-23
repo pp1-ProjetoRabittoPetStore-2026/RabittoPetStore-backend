@@ -18,7 +18,8 @@ public class Tutor {
     @Column(unique = true)
     private String email;
 
-    // Aceita no corpo da requisição (input), mas nunca é serializada na resposta
+    
+
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String senha;
 

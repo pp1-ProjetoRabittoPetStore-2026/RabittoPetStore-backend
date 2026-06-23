@@ -10,11 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-/**
- * Popula dados iniciais para que o back-office seja utilizavel logo apos subir:
- * um gerente, um veterinario, um tosador e alguns servicos.
- * So insere se as tabelas estiverem vazias.
- */
+
 @Configuration
 public class DataInitializer {
 

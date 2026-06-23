@@ -17,14 +17,16 @@ public class Agendamento {
 
     private LocalDateTime dataHora;
 
-    // Começa como "Pendente" por padrão
+    
+
     private String status = "Pendente";
 
     @ManyToOne
     @JoinColumn(name = "pet_id")
     private Pet pet;
 
-    // Multiplos servicos por agendamento (ex: Consulta + Banho).
+    
+
     @ManyToMany
     @JoinTable(
             name = "agendamento_servicos",
@@ -32,8 +34,10 @@ public class Agendamento {
             inverseJoinColumns = @JoinColumn(name = "servico_id"))
     private List<Servico> servicos = new ArrayList<>();
 
-    // Profissionais designados: um por setor presente nos servicos
-    // (ex: um veterinario + um tosador). Previne sobreposicao por profissional.
+    
+
+    
+
     @ManyToMany
     @JoinTable(
             name = "agendamento_funcionarios",

@@ -24,13 +24,7 @@ public class JwtService {
     @Value("${app.auth.access-token-minutes:15}")
     private long accessTokenMinutes;
 
-    /**
-     * Gera um access token assinado contendo o id e o papel do usuario.
-     *
-     * @param uid     id do tutor ou funcionario
-     * @param subject identificador legivel (email ou cpf)
-     * @param role    papel ({@link Roles})
-     */
+    
     public String generateAccessToken(Long uid, String subject, String role) {
         Instant now = Instant.now();
         Instant expiresAt = now.plus(accessTokenMinutes, ChronoUnit.MINUTES);
@@ -48,7 +42,7 @@ public class JwtService {
         return accessTokenMinutes * 60;
     }
 
-    /** Faz o parse e validacao do token. Lanca 401 se ausente/invalido. */
+    
     public Claims parse(String authorizationHeader) {
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token de acesso ausente");
@@ -79,7 +73,7 @@ public class JwtService {
         return uid.longValue();
     }
 
-    /** Retorna o id do tutor logado, garantindo que o papel seja TUTOR. */
+    
     public Long extractTutorId(String authorizationHeader) {
         Claims claims = parse(authorizationHeader);
         String role = claims.get("role", String.class);

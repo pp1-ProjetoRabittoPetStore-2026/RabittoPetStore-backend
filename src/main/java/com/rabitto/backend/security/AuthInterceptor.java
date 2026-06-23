@@ -10,13 +10,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.Set;
 
-/**
- * Enforce de RBAC baseado no claim "role" do JWT.
- *
- * Regras (primeira correspondencia vence). Papeis exigidos ou:
- *   - PUBLIC: sem token
- *   - AUTH:   qualquer usuario autenticado
- */
+
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
@@ -30,7 +24,8 @@ public class AuthInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         String method = request.getMethod();
         if ("OPTIONS".equalsIgnoreCase(method)) {
-            return true; // preflight CORS
+            return true; 
+
         }
 
         String path = request.getRequestURI();
@@ -41,7 +36,8 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         String header = request.getHeader("Authorization");
-        String role = jwtService.extractRole(header); // lanca 401 se ausente/invalido
+        String role = jwtService.extractRole(header); 
+
 
         if (required == Rule.AUTH) {
             if (role == null) {
@@ -59,25 +55,30 @@ public class AuthInterceptor implements HandlerInterceptor {
     private Set<String> requiredRoles(String method, String path) {
         boolean isGet = "GET".equalsIgnoreCase(method);
 
-        // --- Publico ---
+        
+
         if (path.startsWith("/auth/")) {
             return Rule.PUBLIC;
         }
         if ("POST".equalsIgnoreCase(method) && path.equals("/tutores")) {
-            return Rule.PUBLIC; // cadastro de tutor
+            return Rule.PUBLIC; 
+
         }
 
-        // --- Servicos ---
+        
+
         if (path.startsWith("/servicos")) {
             return isGet ? Rule.AUTH : Set.of(Roles.GERENTE);
         }
 
-        // --- Pets (ownership garantido no controller) ---
+        
+
         if (path.startsWith("/pets")) {
             return Rule.AUTH;
         }
 
-        // --- Agendamentos ---
+        
+
         if (path.equals("/agendamentos/horarios-disponiveis")) {
             return Rule.AUTH;
         }
@@ -85,23 +86,29 @@ public class AuthInterceptor implements HandlerInterceptor {
             return Set.of(Roles.VETERINARIO);
         }
         if (path.equals("/agendamentos/meus")) {
-            return Rule.AUTH; // tutor consulta os proprios agendamentos
+            return Rule.AUTH; 
+
         }
         if (path.equals("/agendamentos") && "POST".equalsIgnoreCase(method)) {
-            return Rule.AUTH; // tutor agenda servico
+            return Rule.AUTH; 
+
         }
         if (path.startsWith("/agendamentos")) {
-            return Roles.STAFF; // listagens, status, edicao, remocao
+            return Roles.STAFF; 
+
         }
 
-        // --- Funcionarios ---
+        
+
         if (path.startsWith("/funcionarios")) {
             return Set.of(Roles.GERENTE);
         }
 
-        // --- Tutores ---
+        
+
         if (path.equals("/tutores/me")) {
-            return Rule.AUTH; // perfil do proprio tutor
+            return Rule.AUTH; 
+
         }
         if (path.startsWith("/tutores")) {
             return Set.of(Roles.GERENTE);
@@ -110,7 +117,7 @@ public class AuthInterceptor implements HandlerInterceptor {
         return Rule.AUTH;
     }
 
-    /** Marcadores especiais reutilizando referencia de Set por identidade. */
+    
     private static final class Rule {
         static final Set<String> PUBLIC = Set.of("__PUBLIC__");
         static final Set<String> AUTH = Set.of("__AUTH__");

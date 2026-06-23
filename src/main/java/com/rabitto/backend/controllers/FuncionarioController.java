@@ -81,7 +81,8 @@ public class FuncionarioController {
         if (dados.getAtivo() != null) {
             existente.setAtivo(dados.getAtivo());
         }
-        // So troca a senha se vier preenchida
+        
+
         if (dados.getSenha() != null && !dados.getSenha().isBlank()) {
             existente.setSenha(passwordEncoder.encode(dados.getSenha()));
         }
@@ -99,9 +100,14 @@ public class FuncionarioController {
         repository.save(funcionario);
     }
 
-    // Retorna cada profissional ativo (vet/tosador) com seus agendamentos do dia
+    
+
     @GetMapping("/agenda")
-    public List<Map<String, Object>> agenda(@RequestParam(required = false) LocalDate data) {
+    public List<Map<String, Object>> agenda(
+            @RequestParam(required = false) LocalDate data,
+            @RequestParam(required = false) String cargo,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String nome) {
         LocalDate dia = data != null ? data : LocalDate.now();
         LocalDateTime inicio = dia.atTime(0, 0);
         LocalDateTime fim = dia.atTime(23, 59);
@@ -109,12 +115,19 @@ public class FuncionarioController {
         List<Agendamento> agendamentosDoDia =
                 agendamentoRepository.findByDataHoraBetweenOrderByDataHoraAsc(inicio, fim);
 
+        String nomeBusca = nome == null ? "" : nome.trim().toLowerCase();
+
         return repository.findByAtivoTrue().stream()
                 .filter(f -> isVet(f.getCargo()) || isTosador(f.getCargo()))
+                .filter(f -> matchesCargo(f.getCargo(), cargo))
+                .filter(f -> nomeBusca.isEmpty()
+                        || (f.getNome() != null && f.getNome().toLowerCase().contains(nomeBusca)))
                 .map(func -> {
                     List<Agendamento> agendamentos = agendamentosDoDia.stream()
                             .filter(a -> a.getFuncionarios().stream()
                                     .anyMatch(f -> Objects.equals(f.getId(), func.getId())))
+                            .filter(a -> status == null || status.isBlank()
+                                    || status.equalsIgnoreCase(a.getStatus()))
                             .peek(a -> a.getFuncionarios().forEach(f -> f.setSenha(null)))
                             .toList();
 
@@ -125,6 +138,20 @@ public class FuncionarioController {
                     return item;
                 })
                 .toList();
+    }
+
+    private boolean matchesCargo(String cargo, String filtro) {
+        if (filtro == null || filtro.isBlank()) {
+            return true;
+        }
+        String f = filtro.toUpperCase();
+        if (f.contains("VETERIN")) {
+            return isVet(cargo);
+        }
+        if (f.contains("TOSAD") || f.contains("BANHIST")) {
+            return isTosador(cargo);
+        }
+        return true;
     }
 
     private boolean isVet(String cargo) {
