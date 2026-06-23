@@ -48,8 +48,8 @@ public class AgendamentoController {
     @GetMapping(value = { "/status", "/status/{status}" })
     public List<Agendamento> listar(@PathVariable(required = false) String status) {
         List<Agendamento> lista = (status != null && !status.isEmpty())
-                ? agendamentoRepository.findByStatus(status)
-                : agendamentoRepository.findAll();
+                ? agendamentoRepository.findByStatusOrderByDataHoraAsc(status)
+                : agendamentoRepository.findAllByOrderByDataHoraAsc();
         lista.forEach(this::sanitize);
         return lista;
     }
@@ -110,23 +110,27 @@ public class AgendamentoController {
 
         int capVet = precisaVet ? profissionaisDoSetor(true).size() : Integer.MAX_VALUE;
         int capBanho = precisaBanho ? profissionaisDoSetor(false).size() : Integer.MAX_VALUE;
-        if ((precisaVet && capVet == 0) || (precisaBanho && capBanho == 0)) {
-            return ResponseEntity.ok(new ArrayList<String>()); 
-
-        }
+        boolean semCapacidade = (precisaVet && capVet == 0) || (precisaBanho && capBanho == 0);
 
         LocalDateTime inicioExpediente = data.atTime(9, 0);
         LocalDateTime fimExpediente = data.atTime(17, 0);
-        List<Agendamento> agendamentosDoDia =
-                agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
+        List<Agendamento> agendamentosDoDia = semCapacidade
+                ? new ArrayList<>()
+                : agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
 
-        List<String> horariosLivres = new ArrayList<>();
-        
+        List<HorarioSlot> horarios = new ArrayList<>();
+
 
         int[] minutos = precisaBanho ? new int[] { 0 } : new int[] { 0, 30 };
 
         for (int hora = 9; hora < 17; hora++) {
             for (int min : minutos) {
+                String label = String.format("%02d:%02d", hora, min);
+                if (semCapacidade) {
+                    horarios.add(new HorarioSlot(label, false));
+                    continue;
+                }
+
                 LocalDateTime slot = data.atTime(hora, min);
                 List<Agendamento> noSlot = agendamentosDoDia.stream()
                         .filter(a -> a.getDataHora().equals(slot))
@@ -142,13 +146,15 @@ public class AgendamentoController {
 
                 boolean livreVet = !precisaVet || ocupVet < capVet;
                 boolean livreBanho = !precisaBanho || ocupBanho < capBanho;
-                if (livreVet && livreBanho) {
-                    horariosLivres.add(String.format("%02d:%02d", hora, min));
-                }
+                horarios.add(new HorarioSlot(label, livreVet && livreBanho));
             }
         }
 
-        return ResponseEntity.ok(horariosLivres);
+        return ResponseEntity.ok(horarios);
+    }
+
+
+    public record HorarioSlot(String hora, boolean disponivel) {
     }
 
     

@@ -22,6 +22,10 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, Long> 
 
     List<Agendamento> findByStatus(String status);
 
+    List<Agendamento> findByStatusOrderByDataHoraAsc(String status);
+
+    List<Agendamento> findAllByOrderByDataHoraAsc();
+
     
 
     List<Agendamento> findByFuncionariosIdAndDataHoraBetweenOrderByDataHoraAsc(

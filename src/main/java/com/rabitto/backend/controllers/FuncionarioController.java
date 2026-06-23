@@ -116,6 +116,7 @@ public class FuncionarioController {
                 agendamentoRepository.findByDataHoraBetweenOrderByDataHoraAsc(inicio, fim);
 
         String nomeBusca = nome == null ? "" : nome.trim().toLowerCase();
+        String statusFiltro = status == null ? "" : status.trim();
 
         return repository.findByAtivoTrue().stream()
                 .filter(f -> isVet(f.getCargo()) || isTosador(f.getCargo()))
@@ -126,8 +127,7 @@ public class FuncionarioController {
                     List<Agendamento> agendamentos = agendamentosDoDia.stream()
                             .filter(a -> a.getFuncionarios().stream()
                                     .anyMatch(f -> Objects.equals(f.getId(), func.getId())))
-                            .filter(a -> status == null || status.isBlank()
-                                    || status.equalsIgnoreCase(a.getStatus()))
+                            .filter(a -> matchesStatus(a.getStatus(), statusFiltro))
                             .peek(a -> a.getFuncionarios().forEach(f -> f.setSenha(null)))
                             .toList();
 
@@ -138,6 +138,16 @@ public class FuncionarioController {
                     return item;
                 })
                 .toList();
+    }
+
+
+    private boolean matchesStatus(String status, String filtro) {
+        if (filtro != null && !filtro.isBlank()) {
+            return filtro.equalsIgnoreCase(status);
+        }
+
+        String st = status == null ? "" : status;
+        return !st.equalsIgnoreCase("Rejeitado") && !st.equalsIgnoreCase("Cancelado");
     }
 
     private boolean matchesCargo(String cargo, String filtro) {
