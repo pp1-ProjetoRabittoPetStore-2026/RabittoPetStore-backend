@@ -3,6 +3,8 @@ package com.rabitto.backend.controllers;
 import com.rabitto.backend.models.Tutor;
 import com.rabitto.backend.repositories.TutorRepository;
 import com.rabitto.backend.services.JwtService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -14,6 +16,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/tutores")
 public class TutorController {
+
+    private static final Logger log = LoggerFactory.getLogger(TutorController.class);
 
     @Autowired
     private TutorRepository repository;
@@ -36,6 +40,7 @@ public class TutorController {
         validarUnicidade(tutor, null);
         tutor.setSenha(passwordEncoder.encode(tutor.getSenha()));
         Tutor salvo = repository.save(tutor);
+        log.info("Tutor cadastrado: tutorId={} email={}", salvo.getId(), salvo.getEmail());
         salvo.setSenha(null);
         return salvo;
     }
@@ -70,6 +75,7 @@ public class TutorController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tutor não encontrado");
         }
         repository.deleteById(id);
+        log.info("Tutor removido: tutorId={}", id);
     }
 
     private Tutor atualizarInterno(Long id, Tutor dados) {
@@ -80,13 +86,14 @@ public class TutorController {
         existente.setNome(dados.getNome());
         existente.setEmail(dados.getEmail());
         existente.setTelefone(dados.getTelefone());
-        
+
 
         if (dados.getSenha() != null && !dados.getSenha().isBlank()) {
             existente.setSenha(passwordEncoder.encode(dados.getSenha()));
         }
 
         Tutor salvo = repository.save(existente);
+        log.info("Tutor atualizado: tutorId={}", id);
         salvo.setSenha(null);
         return salvo;
     }

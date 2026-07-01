@@ -10,6 +10,8 @@ import com.rabitto.backend.security.Roles;
 import com.rabitto.backend.services.JwtService;
 import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,8 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private static final String TOKEN_TYPE = "Bearer";
 
@@ -66,6 +70,7 @@ public class AuthController {
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         Optional<Tutor> tutorOpt = tutorRepository.findByEmail(request.email());
         if (tutorOpt.isEmpty() || !isPasswordValid(request.senha(), tutorOpt.get().getSenha())) {
+            log.warn("Login de tutor falhou: email={}", request.email());
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "Email ou senha invalidos"));
         }
@@ -76,6 +81,7 @@ public class AuthController {
         authRepository.save(refreshSession);
 
         String accessToken = jwtService.generateAccessToken(tutor.getId(), tutor.getEmail(), Roles.TUTOR);
+        log.info("Login de tutor OK: tutorId={} email={}", tutor.getId(), tutor.getEmail());
         return ResponseEntity.ok(new TokenResponse(
                 accessToken, refreshSession.getRefreshToken(), TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
     }
@@ -92,10 +98,12 @@ public class AuthController {
         }
 
         if (funcOpt.isEmpty() || !isPasswordValid(request.senha(), funcOpt.get().getSenha())) {
+            log.warn("Login de staff falhou: identifier={}", identifier);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "Credenciais invalidas"));
         }
         if (!Boolean.TRUE.equals(funcOpt.get().getAtivo())) {
+            log.warn("Login de staff rejeitado (conta inativa): funcionarioId={}", funcOpt.get().getId());
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Conta inativa. Contate o administrador"));
         }
@@ -105,6 +113,7 @@ public class AuthController {
         String subject = func.getEmail() != null ? func.getEmail() : func.getCpf();
         String accessToken = jwtService.generateAccessToken(func.getId(), subject, role);
 
+        log.info("Login de staff OK: funcionarioId={} role={}", func.getId(), role);
         return ResponseEntity.ok(new TokenResponse(
                 accessToken, "", TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
     }
@@ -139,6 +148,7 @@ public class AuthController {
                     .ifPresent(token -> {
                         token.setRevoked(true);
                         authRepository.save(token);
+                        log.info("Logout: tutorId={} refreshToken revogado", token.getTutor().getId());
                     });
         }
         return ResponseEntity.ok(Map.of("message", "Logout realizado com sucesso"));
@@ -154,6 +164,7 @@ public class AuthController {
 
         Optional<Auth> tokenOpt = authRepository.findByRefreshTokenAndRevokedFalse(request.refreshToken());
         if (tokenOpt.isEmpty()) {
+            log.warn("Refresh token invalido/ja utilizado");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "Refresh token invalido"));
         }
@@ -162,6 +173,7 @@ public class AuthController {
         if (currentToken.getExpiresAt().isBefore(Instant.now())) {
             currentToken.setRevoked(true);
             authRepository.save(currentToken);
+            log.warn("Refresh token expirado: tutorId={}", currentToken.getTutor().getId());
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "Refresh token expirado"));
         }
@@ -174,6 +186,7 @@ public class AuthController {
         authRepository.save(newRefreshSession);
 
         String accessToken = jwtService.generateAccessToken(tutor.getId(), tutor.getEmail(), Roles.TUTOR);
+        log.info("Token renovado: tutorId={}", tutor.getId());
         return ResponseEntity.ok(new TokenResponse(
                 accessToken, newRefreshSession.getRefreshToken(), TOKEN_TYPE, jwtService.getAccessTokenSeconds()));
     }

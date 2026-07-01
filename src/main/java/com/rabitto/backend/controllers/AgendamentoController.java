@@ -7,6 +7,8 @@ import com.rabitto.backend.repositories.AgendamentoRepository;
 import com.rabitto.backend.repositories.FuncionarioRepository;
 import com.rabitto.backend.repositories.ServicoRepository;
 import com.rabitto.backend.services.JwtService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +25,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/agendamentos")
 public class AgendamentoController {
+
+    private static final Logger log = LoggerFactory.getLogger(AgendamentoController.class);
 
     private static final List<String> STATUS_PERMITIDOS =
             List.of("Pendente", "Aguardando", "Em Serviço", "Pronto", "Rejeitado", "Cancelado", "Confirmado");
@@ -201,6 +205,7 @@ public class AgendamentoController {
                 .stream()
                 .anyMatch(this::ocupaCapacidade);
         if (duplicado) {
+            log.warn("Agendamento rejeitado (duplicado): petId={} dataHora={} servicoIds={}", petId, dataHora, servicoIds);
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body("Erro: Este pet já possui um agendamento para um destes serviços neste horário.");
         }
@@ -231,6 +236,7 @@ public class AgendamentoController {
         if (precisaVet) {
             List<Funcionario> vets = profissionaisDoSetor(true);
             if (vets.isEmpty()) {
+                log.warn("Agendamento rejeitado: nenhum veterinario cadastrado/ativo");
                 return ResponseEntity.badRequest().body("Erro: Nenhum veterinário disponível na clínica.");
             }
             Funcionario livre = vets.stream()
@@ -238,6 +244,7 @@ public class AgendamentoController {
                     .findFirst()
                     .orElse(null);
             if (livre == null) {
+                log.warn("Agendamento rejeitado: todos os {} veterinarios ocupados em dataHora={}", vets.size(), dataHora);
                 return ResponseEntity.badRequest().body("Erro: O veterinário já está ocupado nesse horário.");
             }
             designados.add(livre);
@@ -246,6 +253,7 @@ public class AgendamentoController {
         if (precisaBanho) {
             List<Funcionario> tosadores = profissionaisDoSetor(false);
             if (tosadores.isEmpty()) {
+                log.warn("Agendamento rejeitado: nenhum tosador cadastrado/ativo");
                 return ResponseEntity.badRequest().body("Erro: Nenhum tosador disponível na loja.");
             }
             Funcionario livre = tosadores.stream()
@@ -253,6 +261,7 @@ public class AgendamentoController {
                     .findFirst()
                     .orElse(null);
             if (livre == null) {
+                log.warn("Agendamento rejeitado: todos os {} tosadores ocupados em dataHora={}", tosadores.size(), dataHora);
                 return ResponseEntity.badRequest().body("Erro: Todos os tosadores já estão ocupados nesse horário.");
             }
             designados.add(livre);
@@ -267,6 +276,9 @@ public class AgendamentoController {
 
         Agendamento salvo = agendamentoRepository.save(agendamento);
         sanitize(salvo);
+        log.info("Agendamento criado: id={} petId={} dataHora={} servicoIds={} funcionarios={}",
+                salvo.getId(), petId, dataHora, servicoIds,
+                designados.stream().map(Funcionario::getId).toList());
         return ResponseEntity.ok(salvo);
     }
 
@@ -275,6 +287,7 @@ public class AgendamentoController {
         agendamentoAtualizado.setId(id);
         Agendamento salvo = agendamentoRepository.save(agendamentoAtualizado);
         sanitize(salvo);
+        log.info("Agendamento atualizado: id={}", id);
         return salvo;
     }
 
@@ -290,9 +303,11 @@ public class AgendamentoController {
 
         return agendamentoRepository.findById(id)
                 .map(agendamento -> {
+                    String statusAnterior = agendamento.getStatus();
                     agendamento.setStatus(novoStatus);
                     Agendamento salvo = agendamentoRepository.save(agendamento);
                     sanitize(salvo);
+                    log.info("Status do agendamento alterado: id={} {} -> {}", id, statusAnterior, novoStatus);
                     return ResponseEntity.ok(salvo);
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -301,6 +316,7 @@ public class AgendamentoController {
     @DeleteMapping("/{id}")
     public void deletar(@PathVariable Long id) {
         agendamentoRepository.deleteById(id);
+        log.info("Agendamento removido: id={}", id);
     }
 
     

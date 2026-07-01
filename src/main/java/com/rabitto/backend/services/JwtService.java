@@ -4,6 +4,8 @@ import com.rabitto.backend.security.Roles;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -18,6 +20,8 @@ import java.util.Date;
 @Component
 public class JwtService {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtService.class);
+
     @Value("${app.auth.jwt-secret:change-this-secret-key-with-at-least-32-characters}")
     private String jwtSecret;
 
@@ -28,6 +32,7 @@ public class JwtService {
     public String generateAccessToken(Long uid, String subject, String role) {
         Instant now = Instant.now();
         Instant expiresAt = now.plus(accessTokenMinutes, ChronoUnit.MINUTES);
+        log.debug("Access token gerado: uid={} role={} expiraEm={}", uid, role, expiresAt);
         return Jwts.builder()
                 .subject(subject)
                 .claim("uid", uid)
@@ -57,6 +62,7 @@ public class JwtService {
         } catch (ResponseStatusException ex) {
             throw ex;
         } catch (Exception ex) {
+            log.warn("Token invalido/expirado: {} - {}", ex.getClass().getSimpleName(), ex.getMessage());
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token invalido", ex);
         }
     }

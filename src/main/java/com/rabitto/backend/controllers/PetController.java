@@ -5,6 +5,8 @@ import com.rabitto.backend.models.Tutor;
 import com.rabitto.backend.repositories.PetRepository;
 import com.rabitto.backend.repositories.TutorRepository;
 import com.rabitto.backend.services.JwtService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +17,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/pets")
 public class PetController {
+
+    private static final Logger log = LoggerFactory.getLogger(PetController.class);
 
     @Autowired
     private PetRepository repository;
@@ -45,7 +49,9 @@ public class PetController {
         Tutor tutor = tutorRepository.findById(tutorId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tutor não encontrado"));
         pet.setTutor(tutor);
-        return repository.save(pet);
+        Pet salvo = repository.save(pet);
+        log.info("Pet criado: petId={} tutorId={} nome={}", salvo.getId(), tutorId, salvo.getNome());
+        return salvo;
     }
 
     @GetMapping("/{id}")
@@ -74,7 +80,9 @@ public class PetController {
         }
         petAtualizado.setId(id);
         petAtualizado.setTutor(existing.getTutor());
-        return repository.save(petAtualizado);
+        Pet salvo = repository.save(petAtualizado);
+        log.info("Pet atualizado: petId={} tutorId={}", id, tutorId);
+        return salvo;
     }
 
     @DeleteMapping("/{id}")
@@ -88,5 +96,6 @@ public class PetController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Este pet não pertence ao tutor logado");
         }
         repository.deleteById(id);
+        log.info("Pet removido: petId={} tutorId={}", id, tutorId);
     }
 }
