@@ -109,7 +109,11 @@ public class AuthInterceptor implements HandlerInterceptor {
             return Set.of(Roles.VETERINARIO);
         }
         if (path.equals("/agendamentos/meus")) {
-            return Rule.AUTH; 
+            return Rule.AUTH;
+
+        }
+        if ("PATCH".equalsIgnoreCase(method) && path.matches("/agendamentos/\\d+/cancelar")) {
+            return Rule.AUTH;
 
         }
         if (path.equals("/agendamentos") && "POST".equalsIgnoreCase(method)) {

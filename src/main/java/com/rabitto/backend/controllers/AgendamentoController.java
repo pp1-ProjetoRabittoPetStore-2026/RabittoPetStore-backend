@@ -305,6 +305,35 @@ public class AgendamentoController {
         log.info("Agendamento removido: id={}", id);
     }
 
+    @PatchMapping("/{id}/cancelar")
+    public ResponseEntity<?> cancelar(
+            @PathVariable Long id,
+            @RequestHeader(value = "Authorization", required = false) String header) {
+        Long tutorId = jwtService.extractTutorId(header);
+
+        Agendamento agendamento = agendamentoRepository.findById(id).orElse(null);
+        if (agendamento == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (agendamento.getPet() == null || agendamento.getPet().getTutor() == null
+                || !agendamento.getPet().getTutor().getId().equals(tutorId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Erro: Este agendamento não pertence a você.");
+        }
+        if (STATUS_LIBERADOS.contains(agendamento.getStatus())) {
+            return ResponseEntity.badRequest().body("Erro: Este agendamento já está cancelado.");
+        }
+        if (agendamento.getDataHora().isBefore(LocalDateTime.now().plusDays(1))) {
+            return ResponseEntity.badRequest()
+                    .body("Erro: Cancelamento só é permitido com pelo menos 1 dia de antecedência.");
+        }
+
+        agendamento.setStatus("Cancelado");
+        Agendamento salvo = agendamentoRepository.save(agendamento);
+        sanitize(salvo);
+        log.info("Agendamento cancelado pelo tutor: id={} tutorId={}", id, tutorId);
+        return ResponseEntity.ok(salvo);
+    }
+
     
 
 
