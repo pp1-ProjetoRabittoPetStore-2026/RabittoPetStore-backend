@@ -15,4 +15,5 @@ public class Servico {
     private String nome;
     private String descricao;
     private Double preco;
+    private Integer duracaoMinutos;
 }

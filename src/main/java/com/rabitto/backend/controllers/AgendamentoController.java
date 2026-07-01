@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -109,6 +110,8 @@ public class AgendamentoController {
             return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
         }
 
+        servicos.forEach(this::duracaoDoServico);
+
         boolean precisaVet = servicos.stream().anyMatch(this::isVetServico);
         boolean precisaBanho = servicos.stream().anyMatch(s -> !isVetServico(s));
 
@@ -118,14 +121,13 @@ public class AgendamentoController {
 
         LocalDateTime inicioExpediente = data.atTime(9, 0);
         LocalDateTime fimExpediente = data.atTime(17, 0);
-        List<Agendamento> agendamentosDoDia = semCapacidade
-                ? new ArrayList<>()
-                : agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente);
+        List<AgendamentoComJanela> doDia = semCapacidade
+                ? List.of()
+                : comJanelas(agendamentoRepository.findByDataHoraBetween(inicioExpediente, fimExpediente));
 
         List<HorarioSlot> horarios = new ArrayList<>();
 
-
-        int[] minutos = precisaBanho ? new int[] { 0 } : new int[] { 0, 30 };
+        int[] minutos = { 0, 30 };
 
         for (int hora = 9; hora < 17; hora++) {
             for (int min : minutos) {
@@ -136,20 +138,15 @@ public class AgendamentoController {
                 }
 
                 LocalDateTime slot = data.atTime(hora, min);
-                List<Agendamento> noSlot = agendamentosDoDia.stream()
-                        .filter(a -> a.getDataHora().equals(slot))
-                        .filter(this::ocupaCapacidade)
-                        .collect(Collectors.toList());
+                JanelasVisita candidata = calcularJanelas(slot, servicos);
 
-                long ocupVet = noSlot.stream()
-                        .filter(a -> a.getServicos().stream().anyMatch(this::isVetServico))
-                        .count();
-                long ocupBanho = noSlot.stream()
-                        .filter(a -> a.getServicos().stream().anyMatch(s -> !isVetServico(s)))
-                        .count();
+                if (candidata.fimVisita().isAfter(fimExpediente)) {
+                    horarios.add(new HorarioSlot(label, false));
+                    continue;
+                }
 
-                boolean livreVet = !precisaVet || ocupVet < capVet;
-                boolean livreBanho = !precisaBanho || ocupBanho < capBanho;
+                boolean livreVet = !precisaVet || ocupadosNoSetor(candidata.vet(), true, doDia).size() < capVet;
+                boolean livreBanho = !precisaBanho || ocupadosNoSetor(candidata.banho(), false, doDia).size() < capBanho;
                 horarios.add(new HorarioSlot(label, livreVet && livreBanho));
             }
         }
@@ -171,13 +168,11 @@ public class AgendamentoController {
             return ResponseEntity.badRequest().body("Erro: dataHora é obrigatória.");
         }
 
-        
-
-        if (dataHora.getHour() < 9 || dataHora.getHour() >= 17) {
+        if (dataHora.getHour() < 9) {
             return ResponseEntity.badRequest().body("Erro: O Rabitto funciona apenas das 09:00 às 17:00.");
         }
 
-        
+
 
         if (agendamento.getServicos() == null || agendamento.getServicos().isEmpty()) {
             return ResponseEntity.badRequest().body("Erro: Selecione ao menos um serviço.");
@@ -194,78 +189,69 @@ public class AgendamentoController {
             return ResponseEntity.badRequest().body("Erro: Serviço não encontrado.");
         }
 
-
-
         Long petId = agendamento.getPet() != null ? agendamento.getPet().getId() : null;
         if (petId == null) {
             return ResponseEntity.badRequest().body("Erro: Pet é obrigatório.");
         }
-        boolean duplicado = agendamentoRepository
-                .findByPetIdAndDataHoraAndServicosIdIn(petId, dataHora, servicoIds)
-                .stream()
-                .anyMatch(this::ocupaCapacidade);
-        if (duplicado) {
-            log.warn("Agendamento rejeitado (duplicado): petId={} dataHora={} servicoIds={}", petId, dataHora, servicoIds);
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body("Erro: Este pet já possui um agendamento para um destes serviços neste horário.");
-        }
 
-        boolean precisaVet = servicosEscolhidos.stream().anyMatch(this::isVetServico);
-        boolean precisaBanho = servicosEscolhidos.stream().anyMatch(s -> !isVetServico(s));
-
-
-
-        if (precisaBanho) {
-            if (dataHora.getMinute() != 0) {
-                return ResponseEntity.badRequest().body("Erro: Banhos devem ser marcados em hora cheia (ex: 10:00).");
-            }
-        } else if (dataHora.getMinute() != 0 && dataHora.getMinute() != 30) {
+        JanelasVisita candidata = calcularJanelas(dataHora, servicosEscolhidos);
+        LocalDate data = dataHora.toLocalDate();
+        if (candidata.fimVisita().isAfter(data.atTime(17, 0))) {
             return ResponseEntity.badRequest()
-                    .body("Erro: Consultas devem ser em intervalos de 30 min (ex: 14:00, 14:30).");
+                    .body("Erro: O horário selecionado faria o atendimento terminar após o fechamento (17:00).");
         }
 
-        
+        boolean precisaBanho = candidata.banho() != null;
+        boolean precisaVet = candidata.vet() != null;
 
-        Set<Long> ocupadosIds = agendamentoRepository.findByDataHora(dataHora).stream()
-                .filter(this::ocupaCapacidade)
-                .flatMap(a -> a.getFuncionarios().stream())
-                .map(Funcionario::getId)
-                .collect(Collectors.toSet());
+
+
+        List<AgendamentoComJanela> outrosDoPet = comJanelas(agendamentoRepository
+                .findByPetIdAndDataHoraBetween(petId, data.atTime(9, 0), data.atTime(17, 0)));
+        boolean conflitoPet = outrosDoPet.stream().anyMatch(ex -> visitasConflitam(candidata, ex.janelas()));
+        if (conflitoPet) {
+            log.warn("Agendamento rejeitado (conflito de horario do pet): petId={} dataHora={}", petId, dataHora);
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Erro: Este pet já possui um agendamento que conflita com este horário.");
+        }
+
+        List<AgendamentoComJanela> doDia = comJanelas(
+                agendamentoRepository.findByDataHoraBetween(data.atTime(9, 0), data.atTime(17, 0)));
 
         List<Funcionario> designados = new ArrayList<>();
-        if (precisaVet) {
-            List<Funcionario> vets = profissionaisDoSetor(true);
-            if (vets.isEmpty()) {
-                log.warn("Agendamento rejeitado: nenhum veterinario cadastrado/ativo");
-                return ResponseEntity.badRequest().body("Erro: Nenhum veterinário disponível na clínica.");
-            }
-            Funcionario livre = vets.stream()
-                    .filter(f -> !ocupadosIds.contains(f.getId()))
-                    .findFirst()
-                    .orElse(null);
-            if (livre == null) {
-                log.warn("Agendamento rejeitado: todos os {} veterinarios ocupados em dataHora={}", vets.size(), dataHora);
-                return ResponseEntity.badRequest().body("Erro: O veterinário já está ocupado nesse horário.");
-            }
-            designados.add(livre);
-            ocupadosIds.add(livre.getId());
-        }
         if (precisaBanho) {
             List<Funcionario> tosadores = profissionaisDoSetor(false);
             if (tosadores.isEmpty()) {
                 log.warn("Agendamento rejeitado: nenhum tosador cadastrado/ativo");
                 return ResponseEntity.badRequest().body("Erro: Nenhum tosador disponível na loja.");
             }
+            Set<Long> ocupados = ocupadosNoSetor(candidata.banho(), false, doDia);
             Funcionario livre = tosadores.stream()
-                    .filter(f -> !ocupadosIds.contains(f.getId()))
+                    .filter(f -> !ocupados.contains(f.getId()))
                     .findFirst()
                     .orElse(null);
             if (livre == null) {
-                log.warn("Agendamento rejeitado: todos os {} tosadores ocupados em dataHora={}", tosadores.size(), dataHora);
+                log.warn("Agendamento rejeitado: todos os {} tosadores ocupados em janela banho={}", tosadores.size(), candidata.banho());
                 return ResponseEntity.badRequest().body("Erro: Todos os tosadores já estão ocupados nesse horário.");
             }
             designados.add(livre);
-            ocupadosIds.add(livre.getId());
+        }
+        if (precisaVet) {
+            List<Funcionario> vets = profissionaisDoSetor(true);
+            if (vets.isEmpty()) {
+                log.warn("Agendamento rejeitado: nenhum veterinario cadastrado/ativo");
+                return ResponseEntity.badRequest().body("Erro: Nenhum veterinário disponível na clínica.");
+            }
+            Set<Long> ocupados = ocupadosNoSetor(candidata.vet(), true, doDia);
+            Funcionario livre = vets.stream()
+                    .filter(f -> !ocupados.contains(f.getId()))
+                    .findFirst()
+                    .orElse(null);
+            if (livre == null) {
+                log.warn("Agendamento rejeitado: todos os {} veterinarios ocupados em janela vet={}", vets.size(), candidata.vet());
+                return ResponseEntity.badRequest().body("Erro: O veterinário já está ocupado nesse horário.");
+            }
+            designados.add(livre);
         }
 
         agendamento.setServicos(servicosEscolhidos);
@@ -276,8 +262,8 @@ public class AgendamentoController {
 
         Agendamento salvo = agendamentoRepository.save(agendamento);
         sanitize(salvo);
-        log.info("Agendamento criado: id={} petId={} dataHora={} servicoIds={} funcionarios={}",
-                salvo.getId(), petId, dataHora, servicoIds,
+        log.info("Agendamento criado: id={} petId={} banho={} vet={} fimVisita={} funcionarios={}",
+                salvo.getId(), petId, candidata.banho(), candidata.vet(), candidata.fimVisita(),
                 designados.stream().map(Funcionario::getId).toList());
         return ResponseEntity.ok(salvo);
     }
@@ -337,16 +323,86 @@ public class AgendamentoController {
 
     private List<Funcionario> profissionaisDoSetor(boolean isVet) {
         return funcionarioRepository.findByAtivoTrue().stream()
-                .filter(f -> {
-                    String cargo = f.getCargo() == null ? "" : f.getCargo().toUpperCase();
-                    return isVet
-                            ? cargo.contains("VETERIN")
-                            : (cargo.contains("TOSAD") || cargo.contains("BANHIST"));
-                })
+                .filter(f -> isDoSetor(f, isVet))
                 .toList();
     }
 
-    
+    private boolean isDoSetor(Funcionario f, boolean isVet) {
+        String cargo = f.getCargo() == null ? "" : f.getCargo().toUpperCase();
+        return isVet
+                ? cargo.contains("VETERIN")
+                : (cargo.contains("TOSAD") || cargo.contains("BANHIST"));
+    }
+
+
+
+
+    private int duracaoDoServico(Servico s) {
+        if (s.getDuracaoMinutos() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Erro: Serviço '" + s.getNome() + "' sem duração configurada.");
+        }
+        return s.getDuracaoMinutos();
+    }
+
+    private int duracaoSetor(List<Servico> servicos, boolean isVet) {
+        return servicos.stream()
+                .filter(s -> isVetServico(s) == isVet)
+                .mapToInt(this::duracaoDoServico)
+                .sum();
+    }
+
+    private record Janela(LocalDateTime inicio, LocalDateTime fim) {
+    }
+
+    private record JanelasVisita(Janela banho, Janela vet, LocalDateTime fimVisita) {
+    }
+
+
+    private JanelasVisita calcularJanelas(LocalDateTime dataHora, List<Servico> servicos) {
+        int durBanho = duracaoSetor(servicos, false);
+        int durVet = duracaoSetor(servicos, true);
+        Janela banho = durBanho > 0 ? new Janela(dataHora, dataHora.plusMinutes(durBanho)) : null;
+        LocalDateTime inicioVet = durBanho > 0 ? dataHora.plusMinutes(durBanho) : dataHora;
+        Janela vet = durVet > 0 ? new Janela(inicioVet, inicioVet.plusMinutes(durVet)) : null;
+        LocalDateTime fimVisita = durVet > 0 ? inicioVet.plusMinutes(durVet)
+                : (durBanho > 0 ? dataHora.plusMinutes(durBanho) : dataHora);
+        return new JanelasVisita(banho, vet, fimVisita);
+    }
+
+    private boolean overlapa(Janela a, Janela b) {
+        return a != null && b != null && a.inicio().isBefore(b.fim()) && b.inicio().isBefore(a.fim());
+    }
+
+    private boolean visitasConflitam(JanelasVisita a, JanelasVisita b) {
+        return overlapa(a.banho(), b.banho()) || overlapa(a.banho(), b.vet())
+                || overlapa(a.vet(), b.banho()) || overlapa(a.vet(), b.vet());
+    }
+
+    private record AgendamentoComJanela(Agendamento agendamento, JanelasVisita janelas) {
+    }
+
+    private List<AgendamentoComJanela> comJanelas(List<Agendamento> agendamentos) {
+        return agendamentos.stream()
+                .filter(this::ocupaCapacidade)
+                .map(a -> new AgendamentoComJanela(a, calcularJanelas(a.getDataHora(), a.getServicos())))
+                .toList();
+    }
+
+
+    private Set<Long> ocupadosNoSetor(Janela candidata, boolean isVet, List<AgendamentoComJanela> existentes) {
+        if (candidata == null) {
+            return Set.of();
+        }
+        return existentes.stream()
+                .filter(ex -> overlapa(candidata, isVet ? ex.janelas().vet() : ex.janelas().banho()))
+                .flatMap(ex -> ex.agendamento().getFuncionarios().stream())
+                .filter(f -> isDoSetor(f, isVet))
+                .map(Funcionario::getId)
+                .collect(Collectors.toSet());
+    }
+
+
     private void sanitize(Agendamento a) {
         if (a != null && a.getFuncionarios() != null) {
             a.getFuncionarios().forEach(f -> {

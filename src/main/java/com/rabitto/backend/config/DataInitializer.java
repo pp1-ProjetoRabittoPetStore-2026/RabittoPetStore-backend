@@ -12,11 +12,21 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.List;
+import java.util.Map;
+
 
 @Configuration
 public class DataInitializer {
 
     private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
+
+    private static final Map<String, Integer> DURACOES_PADRAO = Map.of(
+            "Banho", 60,
+            "Tosa", 60,
+            "Consulta Veterinária", 30,
+            "Vacina", 15
+    );
 
     @Bean
     CommandLineRunner seed(FuncionarioRepository funcionarioRepository,
@@ -36,13 +46,37 @@ public class DataInitializer {
 
             if (servicoRepository.count() == 0) {
                 log.info("Nenhum servico encontrado, criando servicos seed");
-                servicoRepository.save(servico("Banho", "Banho completo", 60.0));
-                servicoRepository.save(servico("Tosa", "Tosa higiênica", 80.0));
-                servicoRepository.save(servico("Consulta Veterinária", "Consulta clínica", 150.0));
-                servicoRepository.save(servico("Vacina", "Aplicação de vacina", 90.0));
+                servicoRepository.save(servico("Banho", "Banho completo", 60.0, 60));
+                servicoRepository.save(servico("Tosa", "Tosa higiênica", 80.0, 60));
+                servicoRepository.save(servico("Consulta Veterinária", "Consulta clínica", 150.0, 30));
+                servicoRepository.save(servico("Vacina", "Aplicação de vacina", 90.0, 15));
                 log.info("Servicos seed criados: banho, tosa, consulta, vacina");
             }
+
+            backfillDuracaoServicos(servicoRepository);
         };
+    }
+
+    private void backfillDuracaoServicos(ServicoRepository servicoRepository) {
+        List<Servico> semDuracao = servicoRepository.findAll().stream()
+                .filter(s -> s.getDuracaoMinutos() == null)
+                .toList();
+        if (semDuracao.isEmpty()) {
+            return;
+        }
+
+        int corrigidos = 0;
+        for (Servico s : semDuracao) {
+            Integer duracao = DURACOES_PADRAO.get(s.getNome());
+            if (duracao == null) {
+                log.warn("Servico sem duracao configurada e sem default conhecido: id={} nome={}", s.getId(), s.getNome());
+                continue;
+            }
+            s.setDuracaoMinutos(duracao);
+            servicoRepository.save(s);
+            corrigidos++;
+        }
+        log.info("Backfill de duracaoMinutos: {} servico(s) corrigido(s) de {} sem duracao", corrigidos, semDuracao.size());
     }
 
     private Funcionario staff(String nome, String cargo, String cpf, String email, String senhaHash) {
@@ -57,11 +91,12 @@ public class DataInitializer {
         return f;
     }
 
-    private Servico servico(String nome, String descricao, Double preco) {
+    private Servico servico(String nome, String descricao, Double preco, Integer duracaoMinutos) {
         Servico s = new Servico();
         s.setNome(nome);
         s.setDescricao(descricao);
         s.setPreco(preco);
+        s.setDuracaoMinutos(duracaoMinutos);
         return s;
     }
 }
