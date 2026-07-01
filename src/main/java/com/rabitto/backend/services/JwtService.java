@@ -21,7 +21,7 @@ public class JwtService {
     @Value("${app.auth.jwt-secret:change-this-secret-key-with-at-least-32-characters}")
     private String jwtSecret;
 
-    @Value("${app.auth.access-token-minutes:15}")
+    @Value("${app.auth.access-token-minutes:1440}")
     private long accessTokenMinutes;
 
     
